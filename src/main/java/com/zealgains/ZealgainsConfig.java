@@ -3,6 +3,7 @@ package com.zealgains;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.Notification;
 
 @ConfigGroup("zealgains")
 public interface ZealgainsConfig extends Config
@@ -45,5 +46,16 @@ public interface ZealgainsConfig extends Config
 	default boolean hideOutsideSoulWars()
 	{
 		return true;
+	}
+
+	@ConfigItem(
+			keyName = "enableNotifications",
+			name = "Rule Break Alerts",
+			description = "Send a RuneLite notification (sound/banner) when someone breaks a call rule",
+			position = 4
+	)
+	default Notification enableNotifications()
+	{
+		return Notification.ON;
 	}
 }

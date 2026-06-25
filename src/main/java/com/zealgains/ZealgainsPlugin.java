@@ -8,6 +8,7 @@ import net.runelite.api.Client;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.widgets.Widget;
+import net.runelite.client.Notifier;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -46,6 +47,9 @@ public class ZealgainsPlugin extends Plugin
 
 	@Inject
 	private ZealgainsOverlay overlay;
+
+	@Inject
+	private Notifier notifier;
 
 	private ZealgainsPanel panel;
 	private NavigationButton navButton;
@@ -187,7 +191,7 @@ public class ZealgainsPlugin extends Plugin
 				{
 					if (secondsRemaining > 720)
 					{
-						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "B5 CALLED TOO EARLY BY: " + sender, null);
+						sendAlert("B5 CALLED TOO EARLY BY: " + sender);
 						continue;
 					}
 
@@ -198,7 +202,7 @@ public class ZealgainsPlugin extends Plugin
 						{
 							// B5 was called exactly alongside R5, but processed second. Alert operator.
 							String r5Sender = redKills.get(5);
-							client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "r5 and b5 called at the same time, " + r5Sender + " (r5) wins the call", null);
+							sendAlert("r5 and b5 called at the same time, " + r5Sender + " (r5) wins the call");
 						}
 						continue;
 					}
@@ -212,7 +216,7 @@ public class ZealgainsPlugin extends Plugin
 						{
 							// R5 overrides B5 on the exact same tick
 							blueKills.remove(5);
-							client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "r5 and b5 called at the same time, " + sender + " (r5) wins the call", null);
+							sendAlert("r5 and b5 called at the same time, " + sender + " (r5) wins the call");
 						}
 						else
 						{
@@ -244,8 +248,7 @@ public class ZealgainsPlugin extends Plugin
 				{
 					if (getKillsClaimedBy(sender) > 3)
 					{
-						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-								"more than 3 calls before 12:00, please remind: " + sender + " to only call up to 3 before 12:00 minutes left on timer", null);
+						sendAlert("More than 3 calls before 12:00, please remind " + sender + " to only call up to 3 before 12:00.");
 						overCallAlertTriggered = true;
 					}
 				}
@@ -272,6 +275,15 @@ public class ZealgainsPlugin extends Plugin
 	}
 
 	// --- HELPER METHODS ---
+
+	private void sendAlert(String message)
+	{
+		// Add a red color tag to make it stand out in the chatbox
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Zealgains Alert: " + message + "</col>", null);
+
+		// Trigger RuneLite's built-in notification system using the customizable Notification config
+		notifier.notify(config.enableNotifications(), message);
+	}
 
 	private int getKillsClaimedBy(String sender)
 	{
