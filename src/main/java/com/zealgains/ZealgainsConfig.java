@@ -5,6 +5,8 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.Notification;
 
+import java.awt.Color;
+
 @ConfigGroup("zealgains")
 public interface ZealgainsConfig extends Config
 {
@@ -57,5 +59,49 @@ public interface ZealgainsConfig extends Config
 	default Notification enableNotifications()
 	{
 		return Notification.ON;
+	}
+
+	@ConfigItem(
+			keyName = "highlightOnFl",
+			name = "Highlight if on FL",
+			description = "Highlights players who are on your Friends List",
+			position = 5
+	)
+	default boolean highlightOnFl()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "flHighlightColor",
+			name = "FL Highlight Color",
+			description = "Color to highlight players on your Friends List",
+			position = 6
+	)
+	default Color flHighlightColor()
+	{
+		return Color.GREEN;
+	}
+
+	@ConfigItem(
+			keyName = "pmCheckerHighlight",
+			name = "PM Checker Highlight",
+			description = "Highlights online friends in the Friends Chat",
+			position = 7
+	)
+	default boolean pmCheckerHighlight()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "pmCheckerColor",
+			name = "PM Highlight Color",
+			description = "Color to highlight online friends in the Friends Chat",
+			position = 8
+	)
+	default Color pmCheckerColor()
+	{
+		return Color.YELLOW;
 	}
 }

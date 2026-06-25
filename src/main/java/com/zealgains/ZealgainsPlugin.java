@@ -5,9 +5,12 @@ import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.client.Notifier;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -227,7 +230,7 @@ public class ZealgainsPlugin extends Plugin
 				}
 			}
 
-			// NEW: Sequential Check. If it's kill 2-5, verify the previous kill is claimed first.
+			// Sequential Check. If it's kill 2-5, verify the previous kill is claimed first.
 			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1))
 			{
 				// If the previous kill hasn't been called, skip this number entirely
@@ -299,7 +302,7 @@ public class ZealgainsPlugin extends Plugin
 		return total;
 	}
 
-	// --- UPDATED WIDGET TIMER LOGIC ---
+	// --- WIDGET TIMER LOGIC ---
 
 	private int getGameTimeRemaining()
 	{
@@ -336,6 +339,59 @@ public class ZealgainsPlugin extends Plugin
 	{
 		Widget timeWidget = client.getWidget(375, 23);
 		return timeWidget != null && !timeWidget.isHidden();
+	}
+
+	// --- PM CHECKER HIGHLIGHT LOGIC ---
+
+	@Subscribe
+	public void onClientTick(ClientTick event)
+	{
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+
+		// If both are disabled, skip scanning to save performance
+		if (!config.pmCheckerHighlight() && !config.highlightOnFl())
+		{
+			return;
+		}
+
+		Widget chatList = client.getWidget(WidgetInfo.FRIENDS_CHAT_LIST);
+		if (chatList == null || chatList.isHidden())
+		{
+			return;
+		}
+
+		Widget[] children = chatList.getDynamicChildren();
+		if (children == null)
+		{
+			return;
+		}
+
+		for (Widget child : children)
+		{
+			String rawText = child.getText();
+			if (rawText != null && !rawText.isEmpty())
+			{
+				String cleanName = Text.removeTags(rawText).trim();
+
+				// efficiently check if the player is on the friends list at all
+				if (client.isFriended(cleanName, false))
+				{
+					// Check if they are specifically online
+					if (config.pmCheckerHighlight() && client.isFriended(cleanName, true))
+					{
+						child.setTextColor(config.pmCheckerColor().getRGB());
+					}
+					else if (config.highlightOnFl())
+					{
+						// If they are offline, OR if PM checker is disabled, apply the FL color
+						child.setTextColor(config.flHighlightColor().getRGB());
+					}
+				}
+			}
+		}
 	}
 
 	@Provides
