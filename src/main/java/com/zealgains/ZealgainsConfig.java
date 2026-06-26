@@ -3,6 +3,7 @@ package com.zealgains;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Notification;
 
 import java.awt.Color;
@@ -169,5 +170,69 @@ public interface ZealgainsConfig extends Config
 	default Notification dumpReminder()
 	{
 		return Notification.ON;
+	}
+
+	// ─────────────────────────────────────────────
+	// PLUGIN GUIDE
+	// ─────────────────────────────────────────────
+
+	@ConfigSection(
+			name = "Commands & Features Guide",
+			description = "Click to expand — full reference for all commands, rules, and alerts",
+			position = 15,
+			closedByDefault = true
+	)
+	String guideSection = "guideSection";
+
+	@ConfigItem(
+			keyName = "guideCommands",
+			name = "<html><body width='170'>"
+					+ "<font color='#87CEEB'><b>── Commands ──</b></font><br>"
+					+ "<font color='#A0A0A0'>"
+					+ "<font color='#FFB347'>::zgreset</font><br>"
+					+ "Clears all tracked calls and runners.<br><br>"
+					+ "<font color='#FFB347'>::zgreset r or b ##</font><br>"
+					+ "Resets specifically targeted calls. Remaining callers reshuffle into sequential slots and open slots are announced in chat. Supports multiple args: <font color='#FFB347'>::zgreset r2 b3, or :zgreset r34</font><br><br>"
+					+ "<font color='#FFB347'>::zgsync</font><br>"
+					+ "Force-refreshes the ban list immediately. 5-minute cooldown enforced.<br><br>"
+					+ "<font color='#FFB347'>::zgdebug</font><br>"
+					+ "Toggles debug mode. The next FC message received will print its raw character codes to chat."
+					+ "</font></body></html>",
+			description = "",
+			position = 0,
+			section = guideSection
+	)
+	default boolean guideCommands()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			keyName = "guideFeatures",
+			name = "<html><body width='170'>"
+					+ "<font color='#87CEEB'><b>── Overlay ──</b></font><br>"
+					+ "<font color='#A0A0A0'>"
+					+ "R1-R5 and B1-B4 are always shown. B5 only appears after 12:00 and only if R5 has not been claimed. Runners appear at the bottom when signed up.<br><br>"
+					+ "</font>"
+					+ "<font color='#87CEEB'><b>── Call Rules ──</b></font><br>"
+					+ "<font color='#A0A0A0'>"
+					+ "Calls are done in order<br>"
+					+ "Max 3 calls before 12:00.<br>"
+					+ "Each player may only call for one team per game.<br>"
+					+ "B5: valid only after 12:00 and if R5 not claimed. Same-tick tie: R5 wins.<br>"
+					+ "</font>"
+					+ "<font color='#87CEEB'><b>── Runner Callouts ──</b></font><br>"
+					+ "<font color='#A0A0A0'>"
+					+ "Red runner: ^r &nbsp;r^ &nbsp;&gt;r &nbsp;r&gt;<br>"
+					+ "Blue runner: ^b &nbsp;b^ &nbsp;&gt;b &nbsp;b&gt;<br><br>"
+					+ "</font>"
+					+ "</font></body></html>",
+			description = "",
+			position = 1,
+			section = guideSection
+	)
+	default boolean guideFeatures()
+	{
+		return false;
 	}
 }
