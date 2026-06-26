@@ -83,6 +83,9 @@ public class ZealgainsPlugin extends Plugin
 	// Tracks the exact game tick the 5th kill was claimed to resolve ties
 	private int kill5Tick = -1;
 
+	private long lastBanListFetch = 0;
+	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
+
 	// Forces the call to be at the very start of the message.
 	// Now allows repeated team letters in the number string (e.g., r3r4r5)
 	private final Pattern callPattern = Pattern.compile("(?i)^\\s*([rb])([rb1-5]+)");
@@ -116,7 +119,8 @@ public class ZealgainsPlugin extends Plugin
 		overlayManager.add(overlay);
 
 		resetKills();
-		fetchBanList(); // Initial fetch
+		lastBanListFetch = System.currentTimeMillis();
+		fetchBanList();
 	}
 
 	@Override
@@ -170,6 +174,12 @@ public class ZealgainsPlugin extends Plugin
 
 		// Only parse Friends Chat messages for calls
 		if (event.getType() != ChatMessageType.FRIENDSCHAT)
+		{
+			return;
+		}
+
+		// Only track calls when inside a Soul Wars game
+		if (!isInSoulWarsGame())
 		{
 			return;
 		}
@@ -238,17 +248,24 @@ public class ZealgainsPlugin extends Plugin
 			resetKills();
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Kills manually reset.", null);
 		}
-		else if (event.getCommand().equalsIgnoreCase("zgbanlist"))
+		else if (event.getCommand().equalsIgnoreCase("zgsync"))
 		{
-			if (config.enableBanList() && !config.banListUrl().trim().isEmpty())
-			{
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Fetching latest ban list...", null);
-				fetchBanList();
-			}
-			else
+			if (!config.enableBanList() || config.banListUrl().trim().isEmpty())
 			{
 				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Ban list feature is disabled or URL is missing.", null);
+				return;
 			}
+			long now = System.currentTimeMillis();
+			long elapsed = now - lastBanListFetch;
+			if (elapsed < BAN_LIST_COOLDOWN_MS)
+			{
+				long secondsLeft = (BAN_LIST_COOLDOWN_MS - elapsed) / 1000;
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Please wait " + secondsLeft + "s before syncing again.", null);
+				return;
+			}
+			lastBanListFetch = now;
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Fetching latest ban list...", null);
+			fetchBanList();
 		}
 	}
 
