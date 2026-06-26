@@ -152,7 +152,10 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		String sender = Text.removeTags(event.getName());
-		Matcher matcher = callPattern.matcher(message);
+
+		// Strip all spaces so calls like "r 3 4" or "R 1" are seamlessly processed
+		String compressedMessage = message.replaceAll("\\s+", "");
+		Matcher matcher = callPattern.matcher(compressedMessage);
 
 		if (matcher.find())
 		{
