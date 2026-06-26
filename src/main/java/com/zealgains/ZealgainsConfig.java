@@ -104,4 +104,48 @@ public interface ZealgainsConfig extends Config
 	{
 		return Color.YELLOW;
 	}
+
+	@ConfigItem(
+			keyName = "alertCrossWorld",
+			name = "Alert Cross-World Calls",
+			description = "Ignores and alerts you when someone makes a fake call from another world",
+			position = 9
+	)
+	default boolean alertCrossWorld()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "enableBanList",
+			name = "Enable Ban List Highlight",
+			description = "Highlights players in the Friends Chat who are on a remote ban list",
+			position = 10
+	)
+	default boolean enableBanList()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "banListUrl",
+			name = "Ban List URL",
+			description = "Raw URL to a plain text file containing banned names (one per line)",
+			position = 11
+	)
+	default String banListUrl()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+			keyName = "banListColor",
+			name = "Ban List Color",
+			description = "Color to highlight banned players in the Friends Chat",
+			position = 12
+	)
+	default Color banListColor()
+	{
+		return Color.RED;
+	}
 }
