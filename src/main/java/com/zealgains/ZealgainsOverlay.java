@@ -26,17 +26,8 @@ public class ZealgainsOverlay extends OverlayPanel
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        // Hide if the user only wants the Side Panel
-        if (config.displayMode() == ZealgainsConfig.DisplayMode.SIDE_PANEL)
-        {
-            return null;
-        }
-
-        // Hide if outside of Soul Wars and the config option is enabled
-        if (config.hideOutsideSoulWars() && !plugin.isInSoulWarsGame())
-        {
-            return null;
-        }
+        if (config.displayMode() == ZealgainsConfig.DisplayMode.SIDE_PANEL) return null;
+        if (config.hideOutsideSoulWars() && !plugin.isInSoulWarsGame()) return null;
 
         panelComponent.getChildren().clear();
 
@@ -48,21 +39,49 @@ public class ZealgainsOverlay extends OverlayPanel
         Map<Integer, String> rKills = plugin.getRedKills();
         Map<Integer, String> bKills = plugin.getBlueKills();
 
+        // Red team calls
         panelComponent.getChildren().add(LineComponent.builder().left("Red Team").leftColor(Color.RED).build());
         for (int i = 1; i <= 5; i++)
         {
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Kill " + i)
+                    .left("Call " + i)
                     .right(rKills.getOrDefault(i, "-"))
                     .build());
         }
 
+        // Blue team calls
         panelComponent.getChildren().add(LineComponent.builder().left("Blue Team").leftColor(Color.CYAN).build());
         for (int i = 1; i <= 5; i++)
         {
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Kill " + i)
+                    .left("Call " + i)
                     .right(bKills.getOrDefault(i, "-"))
+                    .build());
+        }
+
+        // Uncalled kills summary
+        StringBuilder uncalled = new StringBuilder();
+        for (int i = 1; i <= 5; i++) if (!rKills.containsKey(i)) uncalled.append("R").append(i).append(" ");
+        for (int i = 1; i <= 4; i++) if (!bKills.containsKey(i)) uncalled.append("B").append(i).append(" ");
+        String uncalledStr = uncalled.toString().trim();
+        if (!uncalledStr.isEmpty())
+        {
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Uncalled")
+                    .right(uncalledStr)
+                    .rightColor(Color.ORANGE)
+                    .build());
+        }
+
+        // B5 availability — only shown after 12:00
+        int timeRemaining = plugin.getGameTimeRemaining();
+        if (timeRemaining != -1 && timeRemaining <= 720)
+        {
+            boolean b5Available = !rKills.containsKey(5) && !bKills.containsKey(5);
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("B5")
+                    .right(b5Available ? "AVAILABLE" : "LOCKED")
+                    .rightColor(b5Available ? Color.GREEN : Color.RED)
                     .build());
         }
 

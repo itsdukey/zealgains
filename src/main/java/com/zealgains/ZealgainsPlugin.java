@@ -10,7 +10,10 @@ import net.runelite.api.FriendsChatMember;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.FriendsChatChanged;
 import net.runelite.api.events.FriendsChatMemberJoined;
+import net.runelite.api.events.FriendsChatMemberLeft;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.Notifier;
@@ -35,9 +38,13 @@ import okhttp3.Response;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -72,38 +79,46 @@ public class ZealgainsPlugin extends Plugin
 	@Inject
 	private OkHttpClient httpClient;
 
+	@Inject
+	private ScheduledExecutorService executor;
+
 	private ZealgainsPanel panel;
 	private NavigationButton navButton;
+	private ScheduledFuture<?> banListRefreshTask;
 
+	// Kill tracking — only accessed on the client thread
 	private final Map<Integer, String> redKills = new HashMap<>();
 	private final Map<Integer, String> blueKills = new HashMap<>();
 
-	// Thread-safe set for fetching the ban list asynchronously
+	// Runner tracking (^r / ^b callouts)
+	private final Set<String> redRunners = new LinkedHashSet<>();
+	private final Set<String> blueRunners = new LinkedHashSet<>();
+
+	// Thread-safe set populated from OkHttp thread
 	private final Set<String> bannedPlayers = ConcurrentHashMap.newKeySet();
 
-	// Tracks the exact game tick the 5th kill was claimed to resolve ties
 	private int kill5Tick = -1;
+	private int cachedMajorityWorld = -1;
+	private boolean dumpReminderFired = false;
 
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
 
-	// Forces the call to be at the very start of the message.
-	// Now allows repeated team letters in the number string (e.g., r3r4r5)
 	private final Pattern callPattern = Pattern.compile("(?i)^\\s*([rb])([rb1-5]+)");
+	private final Pattern runnerPattern = Pattern.compile("(?i)^\\^([rb])");
 
-	// Getters for the Overlay UI
+	// Getters for overlay and panel
 	public Map<Integer, String> getRedKills() { return redKills; }
 	public Map<Integer, String> getBlueKills() { return blueKills; }
+	public Set<String> getRedRunners() { return redRunners; }
+	public Set<String> getBlueRunners() { return blueRunners; }
 
 	@Override
 	protected void startUp() throws Exception
 	{
-		// Set up the Sidebar Panel
 		panel = new ZealgainsPanel(this);
 
-		// Ensure you have an icon.png in src/main/resources/
 		final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/icon.png");
-
 		navButton = NavigationButton.builder()
 				.tooltip("Zealgains")
 				.icon(icon)
@@ -116,30 +131,36 @@ public class ZealgainsPlugin extends Plugin
 			clientToolbar.addNavigation(navButton);
 		}
 
-		// Add the screen overlay
 		overlayManager.add(overlay);
-
 		resetKills();
+
 		lastBanListFetch = System.currentTimeMillis();
 		fetchBanList();
+
+		banListRefreshTask = executor.scheduleAtFixedRate(this::fetchBanList, 30, 30, TimeUnit.MINUTES);
 	}
 
 	@Override
 	protected void shutDown() throws Exception
 	{
+		if (banListRefreshTask != null)
+		{
+			banListRefreshTask.cancel(false);
+			banListRefreshTask = null;
+		}
 		clientToolbar.removeNavigation(navButton);
 		overlayManager.remove(overlay);
 		resetKills();
 		bannedPlayers.clear();
+		cachedMajorityWorld = -1;
 	}
+
+	// --- CONFIG CHANGE LISTENER ---
 
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (!event.getGroup().equals("zealgains"))
-		{
-			return;
-		}
+		if (!event.getGroup().equals("zealgains")) return;
 
 		if (event.getKey().equals("displayMode"))
 		{
@@ -151,103 +172,160 @@ public class ZealgainsPlugin extends Plugin
 		}
 		else if (event.getKey().equals("banListUrl") || event.getKey().equals("enableBanList"))
 		{
-			fetchBanList(); // Refetch the list if the URL or toggle changes
+			fetchBanList();
 		}
 	}
+
+	// --- FC EVENT LISTENERS ---
+
+	@Subscribe
+	public void onFriendsChatChanged(FriendsChatChanged event)
+	{
+		// Recompute when joining or leaving an FC entirely
+		cachedMajorityWorld = getMajorityWorld(client.getFriendsChatManager());
+	}
+
+	@Subscribe
+	public void onFriendsChatMemberJoined(FriendsChatMemberJoined event)
+	{
+		cachedMajorityWorld = getMajorityWorld(client.getFriendsChatManager());
+
+		if (!config.enableBanList() || bannedPlayers.isEmpty()) return;
+		String name = cleanOsrsName(event.getMember().getName());
+		if (bannedPlayers.contains(name))
+		{
+			String displayName = Text.removeTags(event.getMember().getName());
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"<col=ff0000>Zealgains: \"" + displayName + "\" was found on the banlist</col>", null);
+			notifier.notify(config.banListNotification(), "\"" + displayName + "\" was found on the banlist");
+		}
+	}
+
+	@Subscribe
+	public void onFriendsChatMemberLeft(FriendsChatMemberLeft event)
+	{
+		cachedMajorityWorld = getMajorityWorld(client.getFriendsChatManager());
+	}
+
+	// --- DUMP REMINDER ---
+
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		int seconds = getGameTimeRemaining();
+
+		if (seconds == -1)
+		{
+			dumpReminderFired = false;
+			return;
+		}
+
+		if (dumpReminderFired) return;
+
+		FriendsChatManager fcm = client.getFriendsChatManager();
+		int memberCount = fcm != null ? fcm.getCount() : 0;
+		int dumpThreshold = memberCount >= 40 ? 285 : 300; // 4:45 or 5:00
+
+		if (seconds <= dumpThreshold)
+		{
+			String timeStr = memberCount >= 40 ? "4:45" : "5:00";
+			String msg = "TIME TO DUMP! " + timeStr + " remaining — dump the winning kill now!";
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Zealgains Alert: " + msg + "</col>", null);
+			notifier.notify(config.dumpReminder(), msg);
+			dumpReminderFired = true;
+		}
+	}
+
+	// --- CHAT MESSAGE HANDLER ---
 
 	@Subscribe
 	public void onChatMessage(ChatMessage event)
 	{
 		String message = Text.removeTags(event.getMessage()).toLowerCase();
 
-		// Auto-Reset when receiving a reward message at the end of a game
+		// Auto-reset on game end — print summary first
 		if (event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM)
 		{
-			if (message.contains("the game has ended") || message.contains("zeal token") || (message.contains("you received") && message.contains("zeal")))
+			if (message.contains("the game has ended") || message.contains("zeal token")
+					|| (message.contains("you received") && message.contains("zeal")))
 			{
 				if (config.autoClear())
 				{
+					printGameSummary();
 					resetKills();
 				}
 				return;
 			}
 		}
 
-		// Only parse Friends Chat messages for calls
-		if (event.getType() != ChatMessageType.FRIENDSCHAT)
+		if (event.getType() != ChatMessageType.FRIENDSCHAT) return;
+
+		// Only track calls while inside a Soul Wars game
+		int secondsRemaining = getGameTimeRemaining();
+		if (secondsRemaining == -1) return;
+
+		String sender = Text.removeTags(event.getName());
+		String compressedMessage = message.replaceAll("\\s+", "");
+
+		// Runner callouts: ^r or ^b
+		Matcher runnerMatcher = runnerPattern.matcher(compressedMessage);
+		if (runnerMatcher.find())
 		{
+			String runnerTeam = runnerMatcher.group(1).toLowerCase();
+			if (runnerTeam.equals("r")) redRunners.add(sender);
+			else blueRunners.add(sender);
+			if (panel != null) panel.updateRunners(redRunners, blueRunners);
 			return;
 		}
 
-		// Only track calls when inside a Soul Wars game
-		if (!isInSoulWarsGame())
-		{
-			return;
-		}
-
-		// Ignore questions or people asking for open spots
+		// Noise filter
 		if (message.contains("?") || message.contains("need") || message.contains("open") || message.contains("who"))
 		{
 			return;
 		}
 
-		String sender = Text.removeTags(event.getName());
-
-		// Strip all spaces so calls like "r 3 4" or "R 1" are seamlessly processed
-		String compressedMessage = message.replaceAll("\\s+", "");
 		Matcher matcher = callPattern.matcher(compressedMessage);
+		if (!matcher.find()) return;
 
-		if (matcher.find())
+		// Majority world check (uses cached value updated by FC member events)
+		if (cachedMajorityWorld != -1 && client.getWorld() != cachedMajorityWorld) return;
+
+		// Cross-world fake call check
+		if (config.alertCrossWorld())
 		{
 			FriendsChatManager fcm = client.getFriendsChatManager();
 			if (fcm != null)
 			{
-				// Check if we are on the active clan world
-				int majorityWorld = getMajorityWorld(fcm);
-				if (majorityWorld != -1 && client.getWorld() != majorityWorld)
+				String standardizedSender = Text.standardize(sender).replace('_', ' ');
+				for (FriendsChatMember member : fcm.getMembers())
 				{
-					// We are not on the clan's majority world, ignore everything to prevent spam
-					return;
-				}
-
-				// Check for off-world fake calls while we ARE on the majority world
-				if (config.alertCrossWorld())
-				{
-					// Normalize underscores to spaces to ensure fair matching
-					String standardizedSender = Text.standardize(sender).replace('_', ' ');
-					for (FriendsChatMember member : fcm.getMembers())
+					if (Text.standardize(member.getName()).replace('_', ' ').equals(standardizedSender))
 					{
-						if (Text.standardize(member.getName()).replace('_', ' ').equals(standardizedSender))
+						if (member.getWorld() != client.getWorld())
 						{
-							int senderWorld = member.getWorld();
-							if (senderWorld != client.getWorld())
-							{
-								sendAlert(sender + " called a fake call from W" + senderWorld);
-								return; // Exit early, completely ignoring the fake call
-							}
-							break; // Found the sender and they are on the same world, break the loop
+							sendAlert(sender + " called a fake call from W" + member.getWorld());
+							return;
 						}
+						break;
 					}
 				}
 			}
-
-			String team = matcher.group(1);
-
-			// Strip out any redundant 'r' or 'b' letters that were typed between numbers
-			String kills = matcher.group(2).replaceAll("[^1-5]", "");
-
-			processCall(team, kills, sender);
 		}
+
+		String team = matcher.group(1).toLowerCase();
+		String kills = matcher.group(2).replaceAll("[^1-5]", "");
+		processCall(team, kills, sender, secondsRemaining);
 	}
 
-	// Listens for typed "::" commands in the game chat
+	// --- COMMANDS ---
+
 	@Subscribe
 	public void onCommandExecuted(CommandExecuted event)
 	{
 		if (event.getCommand().equalsIgnoreCase("zgreset"))
 		{
 			resetKills();
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Kills manually reset.", null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Calls manually reset.", null);
 		}
 		else if (event.getCommand().equalsIgnoreCase("zgsync"))
 		{
@@ -270,158 +348,243 @@ public class ZealgainsPlugin extends Plugin
 		}
 	}
 
-	@Subscribe
-	public void onFriendsChatMemberJoined(FriendsChatMemberJoined event)
-	{
-		if (!config.enableBanList() || bannedPlayers.isEmpty())
-		{
-			return;
-		}
-		String name = cleanOsrsName(event.getMember().getName());
-		if (bannedPlayers.contains(name))
-		{
-			String displayName = Text.removeTags(event.getMember().getName());
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-				"<col=ff0000>Zealgains: \"" + displayName + "\" was found on the banlist</col>", null);
-			notifier.notify(config.banListNotification(), "\"" + displayName + "\" was found on the banlist");
-		}
-	}
+	// --- CALL PROCESSING ---
 
-	private void processCall(String team, String kills, String sender)
+	private void processCall(String team, String kills, String sender, int secondsRemaining)
 	{
-		// Target the correct map based on the team called
 		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
-
 		boolean overCallAlertTriggered = false;
 
 		for (char c : kills.toCharArray())
 		{
 			int killNumber = Character.getNumericValue(c);
-			int secondsRemaining = getGameTimeRemaining();
 
-			// KIll 5 Rules: Time gates, Mutual Exclusivity, and Same-Tick Tie Breakers
-			if (killNumber == 5)
+			if (killNumber == 5 && !validateKill5(team, sender, secondsRemaining)) continue;
+
+			// Sequential check: kill N requires kill N-1 to be claimed first
+			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1)) continue;
+
+			String existing = targetMap.putIfAbsent(killNumber, sender);
+			if (existing == null)
 			{
-				if (team.equals("b"))
-				{
-					if (secondsRemaining > 720)
-					{
-						sendAlert("B5 CALLED TOO EARLY BY: " + sender);
-						continue;
-					}
+				// Successfully claimed
+				if (killNumber == 5) kill5Tick = client.getTickCount();
 
-					// Mutual exclusivity: if Red already has 5, B5 cannot be claimed.
-					if (redKills.containsKey(5))
-					{
-						if (client.getTickCount() == kill5Tick)
-						{
-							// B5 was called exactly alongside R5, but processed second. Alert operator.
-							String r5Sender = redKills.get(5);
-							sendAlert("r5 and b5 called at the same time, " + r5Sender + " (r5) wins the call");
-						}
-						continue;
-					}
-				}
-				else if (team.equals("r"))
+				if (secondsRemaining > 720 && !overCallAlertTriggered && getKillsClaimedBy(sender) > 3)
 				{
-					// Mutual exclusivity: if Blue already has 5, check for same-tick tie.
-					if (blueKills.containsKey(5))
-					{
-						if (client.getTickCount() == kill5Tick)
-						{
-							// R5 overrides B5 on the exact same tick
-							blueKills.remove(5);
-							sendAlert("r5 and b5 called at the same time, " + sender + " (r5) wins the call");
-						}
-						else
-						{
-							// Blue got it legitimately on an earlier tick, R5 is invalid
-							continue;
-						}
-					}
+					sendAlert("More than 3 calls before 12:00, please remind " + sender + " to only call up to 3 before 12:00.");
+					overCallAlertTriggered = true;
 				}
 			}
-
-			// Sequential Check. If it's kill 2-5, verify the previous kill is claimed first.
-			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1))
+			else
 			{
-				// If the previous kill hasn't been called, skip this number entirely
-				continue;
-			}
-
-			// If the sequential check passes, try to assign the kill
-			if (targetMap.putIfAbsent(killNumber, sender) == null)
-			{
-				// Track the exact tick the 5th kill was claimed for tie-breaking
-				if (killNumber == 5)
-				{
-					kill5Tick = client.getTickCount();
-				}
-
-				// The kill was successfully added. Now check if they exceeded the limit before 12:00.
-				if (secondsRemaining > 720 && !overCallAlertTriggered)
-				{
-					if (getKillsClaimedBy(sender) > 3)
-					{
-						sendAlert("More than 3 calls before 12:00, please remind " + sender + " to only call up to 3 before 12:00.");
-						overCallAlertTriggered = true;
-					}
-				}
+				// Slot already taken — only alert if it's the local player making the duplicate
+				alertLocalPlayerConflict(team, killNumber, sender, existing, targetMap);
 			}
 		}
 
-		// Push fresh data to the side panel
-		if (panel != null)
-		{
-			panel.updateKills(redKills, blueKills);
-		}
+		if (panel != null) panel.updateKills(redKills, blueKills);
 	}
+
+	private boolean validateKill5(String team, String sender, int secondsRemaining)
+	{
+		if (team.equals("b"))
+		{
+			if (secondsRemaining > 720)
+			{
+				sendAlert("B5 CALLED TOO EARLY BY: " + sender);
+				return false;
+			}
+			if (redKills.containsKey(5))
+			{
+				if (client.getTickCount() == kill5Tick)
+				{
+					sendAlert("r5 and b5 called at the same time, " + redKills.get(5) + " (r5) wins the call");
+				}
+				return false;
+			}
+		}
+		else
+		{
+			if (blueKills.containsKey(5))
+			{
+				if (client.getTickCount() == kill5Tick)
+				{
+					blueKills.remove(5);
+					sendAlert("r5 and b5 called at the same time, " + sender + " (r5) wins the call");
+				}
+				else
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	private void alertLocalPlayerConflict(String team, int killNumber, String sender, String existingClaimer, Map<Integer, String> targetMap)
+	{
+		if (client.getLocalPlayer() == null) return;
+		String localName = client.getLocalPlayer().getName();
+		if (localName == null) return;
+		if (!Text.standardize(sender).equals(Text.standardize(localName))) return;
+
+		String teamLabel = team.toUpperCase();
+		int nextSlot = killNumber + 1;
+		while (nextSlot <= 5 && targetMap.containsKey(nextSlot)) nextSlot++;
+
+		String suggestion = nextSlot <= 5 ? teamLabel + nextSlot : "a different kill";
+		sendAlert(teamLabel + killNumber + " is already taken by " + existingClaimer + " — " + sender + ", please call " + suggestion);
+	}
+
+	// --- GAME SUMMARY ---
+
+	private void printGameSummary()
+	{
+		if (redKills.isEmpty() && blueKills.isEmpty()) return;
+		StringBuilder sb = new StringBuilder("Call Summary — ");
+		for (int i = 1; i <= 5; i++)
+		{
+			if (redKills.containsKey(i)) sb.append("R").append(i).append(": ").append(redKills.get(i)).append("  ");
+		}
+		for (int i = 1; i <= 5; i++)
+		{
+			if (blueKills.containsKey(i)) sb.append("B").append(i).append(": ").append(blueKills.get(i)).append("  ");
+		}
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", sb.toString().trim(), null);
+	}
+
+	// --- RESET ---
 
 	public void resetKills()
 	{
 		redKills.clear();
 		blueKills.clear();
+		redRunners.clear();
+		blueRunners.clear();
 		kill5Tick = -1;
+		dumpReminderFired = false;
 
 		if (panel != null)
 		{
 			panel.updateKills(redKills, blueKills);
+			panel.updateRunners(redRunners, blueRunners);
 		}
 	}
 
-	// --- HELPER METHODS ---
+	// --- HELPERS ---
 
 	private int getMajorityWorld(FriendsChatManager fcm)
 	{
-		if (fcm == null || fcm.getCount() == 0)
-		{
-			return -1;
-		}
+		if (fcm == null || fcm.getCount() == 0) return -1;
 
 		Map<Integer, Integer> worldCounts = new HashMap<>();
 		for (FriendsChatMember member : fcm.getMembers())
 		{
 			int world = member.getWorld();
-			if (world > 0)
-			{
-				worldCounts.put(world, worldCounts.getOrDefault(world, 0) + 1);
-			}
+			if (world > 0) worldCounts.merge(world, 1, Integer::sum);
 		}
 
-		int majorityWorld = -1;
-		int maxCount = 0;
-
-		for (Map.Entry<Integer, Integer> entry : worldCounts.entrySet())
-		{
-			if (entry.getValue() > maxCount)
-			{
-				maxCount = entry.getValue();
-				majorityWorld = entry.getKey();
-			}
-		}
-
-		return majorityWorld;
+		return worldCounts.entrySet().stream()
+				.max(Map.Entry.comparingByValue())
+				.map(Map.Entry::getKey)
+				.orElse(-1);
 	}
+
+	private void sendAlert(String message)
+	{
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Zealgains Alert: " + message + "</col>", null);
+		notifier.notify(config.enableNotifications(), message);
+	}
+
+	private int getKillsClaimedBy(String sender)
+	{
+		int total = 0;
+		for (String player : redKills.values()) if (player.equals(sender)) total++;
+		for (String player : blueKills.values()) if (player.equals(sender)) total++;
+		return total;
+	}
+
+	private String cleanOsrsName(String input)
+	{
+		if (input == null) return "";
+		return Text.standardize(input)
+				.replace('_', ' ')
+				.replace('-', ' ')
+				.replaceAll("[^a-z0-9 ]", "")
+				.trim();
+	}
+
+	// --- WIDGET / TIMER ---
+
+	public int getGameTimeRemaining()
+	{
+		Widget timeWidget = client.getWidget(375, 23);
+		if (timeWidget == null || timeWidget.isHidden()) return -1;
+
+		String rawText = timeWidget.getText();
+		if (rawText == null || rawText.isEmpty()) return -1;
+
+		String text = Text.removeTags(rawText).trim();
+		if (!text.matches("\\d+:\\d{2}")) return -1;
+
+		try
+		{
+			String[] parts = text.split(":");
+			return (Integer.parseInt(parts[0]) * 60) + Integer.parseInt(parts[1]);
+		}
+		catch (NumberFormatException ignored) { return -1; }
+	}
+
+	public boolean isInSoulWarsGame()
+	{
+		return getGameTimeRemaining() != -1;
+	}
+
+	// --- CHAT HIGHLIGHT ---
+
+	@Subscribe
+	public void onClientTick(ClientTick event)
+	{
+		if (!config.pmCheckerHighlight() && !config.highlightOnFl() && !config.enableBanList()) return;
+		refreshChatHighlights();
+	}
+
+	private void refreshChatHighlights()
+	{
+		Widget chatList = client.getWidget(InterfaceID.ChatchannelCurrent.LIST);
+		if (chatList == null || chatList.isHidden()) return;
+
+		for (Widget child : chatList.getDynamicChildren())
+		{
+			String rawText = child.getText();
+			if (rawText == null || rawText.isEmpty()) continue;
+			if (rawText.startsWith("World ") || rawText.matches("^W\\d+$")) continue;
+
+			String cleanName = Text.removeTags(rawText).trim();
+			String std = cleanOsrsName(cleanName);
+
+			java.awt.Color colorToSet = null;
+
+			if (config.enableBanList() && bannedPlayers.contains(std))
+				colorToSet = config.banListColor();
+			else if (config.pmCheckerHighlight() && client.isFriended(cleanName, true))
+				colorToSet = config.pmCheckerColor();
+			else if (config.highlightOnFl() && client.isFriended(cleanName, false))
+				colorToSet = config.flHighlightColor();
+
+			if (colorToSet != null)
+			{
+				if (rawText.contains("<col=") || rawText.contains("</col>"))
+				{
+					child.setText(rawText.replaceAll("(?i)<col=[^>]+>", "").replace("</col>", ""));
+				}
+				child.setTextColor(colorToSet.getRGB());
+			}
+		}
+	}
+
+	// --- BAN LIST FETCH ---
 
 	private void fetchBanList()
 	{
@@ -431,7 +594,6 @@ public class ZealgainsPlugin extends Plugin
 			return;
 		}
 
-		// Add a timestamp parameter to fully bypass GitHub's CDN caching
 		String baseUrl = config.banListUrl().trim();
 		String requestUrl = baseUrl + (baseUrl.contains("?") ? "&v=" : "?v=") + System.currentTimeMillis();
 
@@ -447,7 +609,7 @@ public class ZealgainsPlugin extends Plugin
 			{
 				log.error("Zealgains: Failed to fetch ban list from provided URL", e);
 				clientThread.invokeLater(() ->
-					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to fetch ban list.", null));
+						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to fetch ban list.", null));
 			}
 
 			@Override
@@ -477,132 +639,11 @@ public class ZealgainsPlugin extends Plugin
 				else
 				{
 					clientThread.invokeLater(() ->
-						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to load ban list. Response not successful.", null));
+							client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to load ban list. Response not successful.", null));
 				}
 				response.close();
 			}
 		});
-	}
-
-	private void sendAlert(String message)
-	{
-		// Add a red color tag to make it stand out in the chatbox
-		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Zealgains Alert: " + message + "</col>", null);
-
-		// Trigger RuneLite's built-in notification system using the customizable Notification config
-		notifier.notify(config.enableNotifications(), message);
-	}
-
-	private int getKillsClaimedBy(String sender)
-	{
-		int total = 0;
-		for (String player : redKills.values())
-		{
-			if (player.equals(sender)) total++;
-		}
-		for (String player : blueKills.values())
-		{
-			if (player.equals(sender)) total++;
-		}
-		return total;
-	}
-
-	private String cleanOsrsName(String input)
-	{
-		if (input == null) return "";
-		return Text.standardize(input)
-				.replace('_', ' ')
-				.replace('-', ' ')
-				.replaceAll("[^a-z0-9 ]", "")
-				.trim();
-	}
-
-	// --- WIDGET TIMER LOGIC ---
-
-	private int getGameTimeRemaining()
-	{
-		// 375 is the Group ID for Soul Wars Game overlay, 23 is the TIME_LEFT Child ID
-		Widget timeWidget = client.getWidget(375, 23);
-
-		// Only attempt to read if the widget exists and is visible
-		if (timeWidget != null && !timeWidget.isHidden())
-		{
-			String rawText = timeWidget.getText();
-			if (rawText != null && !rawText.isEmpty())
-			{
-				// Clean up the text in case it has any game color tags
-				String text = Text.removeTags(rawText).trim();
-
-				if (text.matches("\\d+:\\d{2}"))
-				{
-					try
-					{
-						String[] parts = text.split(":");
-						int minutes = Integer.parseInt(parts[0]);
-						int seconds = Integer.parseInt(parts[1]);
-						return (minutes * 60) + seconds;
-					}
-					catch (NumberFormatException ignored) {}
-				}
-			}
-		}
-
-		return -1;
-	}
-
-	public boolean isInSoulWarsGame()
-	{
-		Widget timeWidget = client.getWidget(375, 23);
-		return timeWidget != null && !timeWidget.isHidden();
-	}
-
-	// --- CHAT HIGHLIGHT LOGIC ---
-
-	@Subscribe
-	public void onClientTick(ClientTick event)
-	{
-		if (!config.pmCheckerHighlight() && !config.highlightOnFl() && !config.enableBanList())
-		{
-			return;
-		}
-		refreshChatHighlights();
-	}
-
-	private void refreshChatHighlights()
-	{
-		Widget chatList = client.getWidget(InterfaceID.ChatchannelCurrent.LIST);
-		if (chatList == null || chatList.isHidden()) return;
-
-		for (Widget child : chatList.getDynamicChildren())
-		{
-			String rawText = child.getText();
-
-			// Skip empty widgets or World text widgets (e.g. "World 330" or "W476")
-			if (rawText != null && !rawText.isEmpty() && !rawText.startsWith("World ") && !rawText.matches("^W\\d+$"))
-			{
-				String cleanName = Text.removeTags(rawText).trim();
-				String std = cleanOsrsName(cleanName);
-
-				java.awt.Color colorToSet = null;
-
-				if (config.enableBanList() && bannedPlayers.contains(std))
-					colorToSet = config.banListColor();
-				else if (config.pmCheckerHighlight() && client.isFriended(cleanName, true))
-					colorToSet = config.pmCheckerColor();
-				else if (config.highlightOnFl() && client.isFriended(cleanName, false))
-					colorToSet = config.flHighlightColor();
-
-				if (colorToSet != null)
-				{
-					// Strip hardcoded OSRS color tags (like <col=ffffff> for the local player) so our setTextColor applies
-					if (rawText.contains("<col=") || rawText.contains("</col>"))
-					{
-						child.setText(rawText.replaceAll("(?i)<col=[^>]+>", "").replace("</col>", ""));
-					}
-					child.setTextColor(colorToSet.getRGB());
-				}
-			}
-		}
 	}
 
 	@Provides

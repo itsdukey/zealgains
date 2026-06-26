@@ -159,4 +159,15 @@ public interface ZealgainsConfig extends Config
 	{
 		return Notification.ON;
 	}
+
+	@ConfigItem(
+			keyName = "dumpReminder",
+			name = "5:00 Dump Reminder",
+			description = "Alert when it's time to dump the winning kill (5:00 remaining, or 4:45 with 40+ members)",
+			position = 14
+	)
+	default Notification dumpReminder()
+	{
+		return Notification.ON;
+	}
 }
