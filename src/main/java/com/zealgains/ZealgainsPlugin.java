@@ -10,6 +10,7 @@ import net.runelite.api.FriendsChatMember;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.FriendsChatMemberJoined;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.Notifier;
@@ -266,6 +267,23 @@ public class ZealgainsPlugin extends Plugin
 			lastBanListFetch = now;
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Fetching latest ban list...", null);
 			fetchBanList();
+		}
+	}
+
+	@Subscribe
+	public void onFriendsChatMemberJoined(FriendsChatMemberJoined event)
+	{
+		if (!config.enableBanList() || bannedPlayers.isEmpty())
+		{
+			return;
+		}
+		String name = cleanOsrsName(event.getMember().getName());
+		if (bannedPlayers.contains(name))
+		{
+			String displayName = Text.removeTags(event.getMember().getName());
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+				"<col=ff0000>Zealgains: \"" + displayName + "\" was found on the banlist</col>", null);
+			notifier.notify(config.banListNotification(), "\"" + displayName + "\" was found on the banlist");
 		}
 	}
 

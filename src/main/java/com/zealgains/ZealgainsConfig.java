@@ -148,4 +148,15 @@ public interface ZealgainsConfig extends Config
 	{
 		return Color.RED;
 	}
+
+	@ConfigItem(
+			keyName = "banListNotification",
+			name = "Ban List Alerts",
+			description = "Send a notification when a banned player joins the Friends Chat",
+			position = 13
+	)
+	default Notification banListNotification()
+	{
+		return Notification.ON;
+	}
 }
