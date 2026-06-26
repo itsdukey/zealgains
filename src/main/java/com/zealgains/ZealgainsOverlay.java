@@ -8,6 +8,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 import javax.inject.Inject;
 import java.awt.*;
 import java.util.Map;
+import java.util.Set;
 
 public class ZealgainsOverlay extends OverlayPanel
 {
@@ -50,39 +51,38 @@ public class ZealgainsOverlay extends OverlayPanel
         }
 
         // Blue team calls
+        int timeRemaining = plugin.getGameTimeRemaining();
+        boolean b5Visible = timeRemaining != -1 && timeRemaining <= 720 && !rKills.containsKey(5);
         panelComponent.getChildren().add(LineComponent.builder().left("Blue Team").leftColor(Color.CYAN).build());
         for (int i = 1; i <= 5; i++)
         {
+            if (i == 5 && !b5Visible) continue;
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Call " + i)
                     .right(bKills.getOrDefault(i, "-"))
                     .build());
         }
 
-        // Uncalled kills summary
-        StringBuilder uncalled = new StringBuilder();
-        for (int i = 1; i <= 5; i++) if (!rKills.containsKey(i)) uncalled.append("R").append(i).append(" ");
-        for (int i = 1; i <= 4; i++) if (!bKills.containsKey(i)) uncalled.append("B").append(i).append(" ");
-        String uncalledStr = uncalled.toString().trim();
-        if (!uncalledStr.isEmpty())
+        // Runners — only shown when at least one runner has signed up
+        Set<String> rRunners = plugin.getRedRunners();
+        Set<String> bRunners = plugin.getBlueRunners();
+        if (!rRunners.isEmpty() || !bRunners.isEmpty())
         {
-            panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Uncalled")
-                    .right(uncalledStr)
-                    .rightColor(Color.ORANGE)
-                    .build());
-        }
-
-        // B5 availability — only shown after 12:00
-        int timeRemaining = plugin.getGameTimeRemaining();
-        if (timeRemaining != -1 && timeRemaining <= 720)
-        {
-            boolean b5Available = !rKills.containsKey(5) && !bKills.containsKey(5);
-            panelComponent.getChildren().add(LineComponent.builder()
-                    .left("B5")
-                    .right(b5Available ? "AVAILABLE" : "LOCKED")
-                    .rightColor(b5Available ? Color.GREEN : Color.RED)
-                    .build());
+            panelComponent.getChildren().add(LineComponent.builder().left("Runners").leftColor(Color.ORANGE).build());
+            if (!rRunners.isEmpty())
+            {
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left(String.join(", ", rRunners))
+                        .leftColor(Color.RED)
+                        .build());
+            }
+            if (!bRunners.isEmpty())
+            {
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left(String.join(", ", bRunners))
+                        .leftColor(Color.CYAN)
+                        .build());
+            }
         }
 
         return super.render(graphics);

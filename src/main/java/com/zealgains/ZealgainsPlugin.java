@@ -100,12 +100,13 @@ public class ZealgainsPlugin extends Plugin
 	private int kill5Tick = -1;
 	private int cachedMajorityWorld = -1;
 	private boolean dumpReminderFired = false;
+	private boolean debugMode = false;
 
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
 
 	private final Pattern callPattern = Pattern.compile("(?i)^\\s*([rb])([rb1-5]+)");
-	private final Pattern runnerPattern = Pattern.compile("(?i)^\\^([rb])");
+	private final Pattern runnerPattern = Pattern.compile("(?i)^(?:[>^]([rb])|([rb])[>^])");
 
 	// Getters for overlay and panel
 	public Map<Integer, String> getRedKills() { return redKills; }
@@ -267,11 +268,23 @@ public class ZealgainsPlugin extends Plugin
 		String sender = Text.removeTags(event.getName());
 		String compressedMessage = message.replaceAll("\\s+", "");
 
-		// Runner callouts: ^r or ^b
-		Matcher runnerMatcher = runnerPattern.matcher(compressedMessage);
+		if (debugMode)
+		{
+			debugMode = false;
+			StringBuilder chars = new StringBuilder("raw[");
+			for (int i = 0; i < Math.min(compressedMessage.length(), 6); i++)
+				chars.append((int) compressedMessage.charAt(i)).append(",");
+			chars.append("] \"").append(compressedMessage, 0, Math.min(compressedMessage.length(), 10)).append("\"");
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains Debug: " + chars, null);
+		}
+
+		// Runner callouts — decode <gt>/<lt> before tag-stripping so > survives
+		String runnerMsg = Text.removeTags(event.getMessage().replace("<gt>", ">").replace("<lt>", "<"))
+				.toLowerCase().replaceAll("\\s+", "");
+		Matcher runnerMatcher = runnerPattern.matcher(runnerMsg);
 		if (runnerMatcher.find())
 		{
-			String runnerTeam = runnerMatcher.group(1).toLowerCase();
+			String runnerTeam = (runnerMatcher.group(1) != null ? runnerMatcher.group(1) : runnerMatcher.group(2)).toLowerCase();
 			if (runnerTeam.equals("r")) redRunners.add(sender);
 			else blueRunners.add(sender);
 			if (panel != null) panel.updateRunners(redRunners, blueRunners);
@@ -326,6 +339,11 @@ public class ZealgainsPlugin extends Plugin
 		{
 			resetKills();
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Calls manually reset.", null);
+		}
+		else if (event.getCommand().equalsIgnoreCase("zgdebug"))
+		{
+			debugMode = !debugMode;
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Debug mode " + (debugMode ? "ON" : "OFF") + " — next FC message will show raw chars.", null);
 		}
 		else if (event.getCommand().equalsIgnoreCase("zgsync"))
 		{
@@ -415,6 +433,7 @@ public class ZealgainsPlugin extends Plugin
 				}
 				else
 				{
+					sendAlert("R5 called by " + sender + " is invalid — B5 was already called by " + blueKills.get(5));
 					return false;
 				}
 			}
