@@ -101,6 +101,7 @@ public class ZealgainsPlugin extends Plugin
 	private int cachedMajorityWorld = -1;
 	private boolean dumpReminderFired = false;
 	private boolean debugMode = false;
+	private final Set<String> disconnectAlerted = new LinkedHashSet<>();
 
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
@@ -206,6 +207,28 @@ public class ZealgainsPlugin extends Plugin
 	public void onFriendsChatMemberLeft(FriendsChatMemberLeft event)
 	{
 		cachedMajorityWorld = getMajorityWorld(client.getFriendsChatManager());
+
+		if (!isInSoulWarsGame()) return;
+
+		String leavingName = Text.removeTags(event.getMember().getName());
+		String leavingStd = Text.standardize(leavingName);
+
+		StringBuilder calls = new StringBuilder();
+		for (Map.Entry<Integer, String> entry : redKills.entrySet())
+		{
+			if (Text.standardize(entry.getValue()).equals(leavingStd))
+				calls.append("R").append(entry.getKey()).append(" ");
+		}
+		for (Map.Entry<Integer, String> entry : blueKills.entrySet())
+		{
+			if (Text.standardize(entry.getValue()).equals(leavingStd))
+				calls.append("B").append(entry.getKey()).append(" ");
+		}
+
+		if (calls.length() > 0 && disconnectAlerted.add(leavingStd))
+		{
+			sendAlert(leavingName + " left the Friends Chat — had calls: " + calls.toString().trim());
+		}
 	}
 
 	// --- DUMP REMINDER ---
@@ -337,8 +360,53 @@ public class ZealgainsPlugin extends Plugin
 	{
 		if (event.getCommand().equalsIgnoreCase("zgreset"))
 		{
-			resetKills();
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Calls manually reset.", null);
+			String[] args = event.getArguments();
+			if (args == null || args.length == 0)
+			{
+				resetKills();
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: All calls reset.", null);
+				return;
+			}
+
+			java.util.regex.Pattern resetPattern = java.util.regex.Pattern.compile("(?i)^([rb])([1-5]+)$");
+			StringBuilder summary = new StringBuilder();
+			Set<String> affectedTeams = new LinkedHashSet<>();
+			for (String arg : args)
+			{
+				java.util.regex.Matcher m = resetPattern.matcher(arg.trim());
+				if (!m.matches()) continue;
+
+				String team = m.group(1).toLowerCase();
+				Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
+
+				for (char c : m.group(2).toCharArray())
+				{
+					int killNum = Character.getNumericValue(c);
+					if (targetMap.remove(killNum) != null)
+					{
+						if (killNum == 5) kill5Tick = -1;
+						summary.append(team.toUpperCase()).append(killNum).append(" ");
+						affectedTeams.add(team);
+					}
+				}
+			}
+
+			String result = summary.toString().trim();
+			if (result.isEmpty())
+			{
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: No matching calls found to reset.", null);
+			}
+			else
+			{
+				StringBuilder reshuffleMsg = new StringBuilder();
+				for (String t : affectedTeams)
+					reshuffleTeam(t, reshuffleMsg);
+
+				if (panel != null) panel.updateKills(redKills, blueKills);
+				String msg = "Zealgains: Reset " + result;
+				if (reshuffleMsg.length() > 0) msg += "— " + reshuffleMsg;
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", msg, null);
+			}
 		}
 		else if (event.getCommand().equalsIgnoreCase("zgdebug"))
 		{
@@ -370,6 +438,14 @@ public class ZealgainsPlugin extends Plugin
 
 	private void processCall(String team, String kills, String sender, int secondsRemaining)
 	{
+		// Team lock: a player may only call for one team
+		String lockedTeam = getSenderTeam(sender);
+		if (lockedTeam != null && !lockedTeam.equals(team))
+		{
+			sendAlert(sender + " is locked to " + lockedTeam.toUpperCase() + " team and cannot call for " + team.toUpperCase() + ".");
+			return;
+		}
+
 		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
 		boolean overCallAlertTriggered = false;
 
@@ -382,17 +458,22 @@ public class ZealgainsPlugin extends Plugin
 			// Sequential check: kill N requires kill N-1 to be claimed first
 			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1)) continue;
 
+			// Before 12:00, cap at 3 kills — reject and free the slot for others
+			if (secondsRemaining > 720 && getKillsClaimedBy(sender) >= 3)
+			{
+				if (!overCallAlertTriggered)
+				{
+					sendAlert(sender + " called more than 3 kills before 12:00 — extra calls ignored.");
+					overCallAlertTriggered = true;
+				}
+				continue;
+			}
+
 			String existing = targetMap.putIfAbsent(killNumber, sender);
 			if (existing == null)
 			{
 				// Successfully claimed
 				if (killNumber == 5) kill5Tick = client.getTickCount();
-
-				if (secondsRemaining > 720 && !overCallAlertTriggered && getKillsClaimedBy(sender) > 3)
-				{
-					sendAlert("More than 3 calls before 12:00, please remind " + sender + " to only call up to 3 before 12:00.");
-					overCallAlertTriggered = true;
-				}
 			}
 			else
 			{
@@ -481,6 +562,7 @@ public class ZealgainsPlugin extends Plugin
 		blueKills.clear();
 		redRunners.clear();
 		blueRunners.clear();
+		disconnectAlerted.clear();
 		kill5Tick = -1;
 		dumpReminderFired = false;
 
@@ -522,6 +604,60 @@ public class ZealgainsPlugin extends Plugin
 		for (String player : redKills.values()) if (player.equals(sender)) total++;
 		for (String player : blueKills.values()) if (player.equals(sender)) total++;
 		return total;
+	}
+
+	private void reshuffleTeam(String team, StringBuilder alertMsg)
+	{
+		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
+		String T = team.toUpperCase();
+
+		// Collect remaining callers in slot order
+		int[] oldSlots = new int[5];
+		String[] callers = new String[5];
+		int count = 0;
+		for (int i = 1; i <= 5; i++)
+		{
+			String caller = targetMap.get(i);
+			if (caller != null) { oldSlots[count] = i; callers[count] = caller; count++; }
+		}
+
+		if (count == 0) return;
+
+		// Check for gaps
+		boolean hasGaps = false;
+		for (int i = 0; i < count; i++)
+			if (oldSlots[i] != i + 1) { hasGaps = true; break; }
+		if (!hasGaps) return;
+
+		// Rebuild compacted from slot 1
+		targetMap.clear();
+		StringBuilder moves = new StringBuilder();
+		for (int i = 0; i < count; i++)
+		{
+			int newSlot = i + 1;
+			targetMap.put(newSlot, callers[i]);
+			if (oldSlots[i] != newSlot)
+			{
+				if (oldSlots[i] == 5) kill5Tick = -1;
+				if (moves.length() > 0) moves.append(", ");
+				moves.append(T).append(oldSlots[i]).append(" moved to ").append(T).append(newSlot);
+			}
+		}
+
+		// Open slots in compact form e.g. "R45"
+		StringBuilder open = new StringBuilder(T);
+		for (int i = count + 1; i <= 5; i++) open.append(i);
+
+		if (alertMsg.length() > 0) alertMsg.append(" | ");
+		alertMsg.append(moves);
+		if (open.length() > 1) alertMsg.append(", need ").append(open);
+	}
+
+	private String getSenderTeam(String sender)
+	{
+		for (String player : redKills.values()) if (player.equals(sender)) return "r";
+		for (String player : blueKills.values()) if (player.equals(sender)) return "b";
+		return null;
 	}
 
 	private String cleanOsrsName(String input)
