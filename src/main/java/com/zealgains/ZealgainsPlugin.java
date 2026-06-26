@@ -7,13 +7,13 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.FriendsChatManager;
 import net.runelite.api.FriendsChatMember;
-import net.runelite.api.GameState;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
-import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.client.Notifier;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -64,6 +64,9 @@ public class ZealgainsPlugin extends Plugin
 
 	@Inject
 	private Notifier notifier;
+
+	@Inject
+	private ClientThread clientThread;
 
 	@Inject
 	private OkHttpClient httpClient;
@@ -393,8 +396,13 @@ public class ZealgainsPlugin extends Plugin
 			return;
 		}
 
+		// Add a timestamp parameter to fully bypass GitHub's CDN caching
+		String baseUrl = config.banListUrl().trim();
+		String requestUrl = baseUrl + (baseUrl.contains("?") ? "&v=" : "?v=") + System.currentTimeMillis();
+
 		Request request = new Request.Builder()
-				.url(config.banListUrl().trim())
+				.url(requestUrl)
+				.cacheControl(okhttp3.CacheControl.FORCE_NETWORK)
 				.build();
 
 		httpClient.newCall(request).enqueue(new Callback()
@@ -403,7 +411,8 @@ public class ZealgainsPlugin extends Plugin
 			public void onFailure(Call call, IOException e)
 			{
 				log.error("Zealgains: Failed to fetch ban list from provided URL", e);
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to fetch ban list.", null);
+				clientThread.invokeLater(() ->
+					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to fetch ban list.", null));
 			}
 
 			@Override
@@ -413,21 +422,27 @@ public class ZealgainsPlugin extends Plugin
 				{
 					bannedPlayers.clear();
 					String body = response.body().string();
-					String[] lines = body.split("\\r?\\n");
-					for (String line : lines)
+					for (String token : body.split(","))
 					{
-						if (!line.trim().isEmpty())
-						{
-							// Replace underscores with spaces to guarantee a match against OSRS display names
-							bannedPlayers.add(Text.standardize(line.trim()).replace('_', ' '));
-						}
+						String trimmed = token.trim();
+						if (trimmed.isEmpty()) continue;
+						if (trimmed.startsWith("--")) continue;
+						if (trimmed.contains("(Added:")) continue;
+						if (trimmed.startsWith("<--")) continue;
+						String name = cleanOsrsName(trimmed);
+						if (!name.isEmpty()) bannedPlayers.add(name);
 					}
 					log.info("Zealgains: Successfully loaded {} banned players.", bannedPlayers.size());
-					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Successfully loaded " + bannedPlayers.size() + " banned players.", null);
+					int count = bannedPlayers.size();
+					clientThread.invokeLater(() -> {
+						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Successfully loaded " + count + " banned players.", null);
+						refreshChatHighlights();
+					});
 				}
 				else
 				{
-					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to load ban list. Response not successful.", null);
+					clientThread.invokeLater(() ->
+						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Failed to load ban list. Response not successful.", null));
 				}
 				response.close();
 			}
@@ -455,6 +470,16 @@ public class ZealgainsPlugin extends Plugin
 			if (player.equals(sender)) total++;
 		}
 		return total;
+	}
+
+	private String cleanOsrsName(String input)
+	{
+		if (input == null) return "";
+		return Text.standardize(input)
+				.replace('_', ' ')
+				.replace('-', ' ')
+				.replaceAll("[^a-z0-9 ]", "")
+				.trim();
 	}
 
 	// --- WIDGET TIMER LOGIC ---
@@ -501,59 +526,45 @@ public class ZealgainsPlugin extends Plugin
 	@Subscribe
 	public void onClientTick(ClientTick event)
 	{
-		if (client.getGameState() != GameState.LOGGED_IN)
-		{
-			return;
-		}
-
-		// If all are disabled, skip scanning to save performance
 		if (!config.pmCheckerHighlight() && !config.highlightOnFl() && !config.enableBanList())
 		{
 			return;
 		}
+		refreshChatHighlights();
+	}
 
-		Widget chatList = client.getWidget(WidgetInfo.FRIENDS_CHAT_LIST);
-		if (chatList == null || chatList.isHidden())
-		{
-			return;
-		}
+	private void refreshChatHighlights()
+	{
+		Widget chatList = client.getWidget(InterfaceID.ChatchannelCurrent.LIST);
+		if (chatList == null || chatList.isHidden()) return;
 
-		Widget[] children = chatList.getDynamicChildren();
-		if (children == null)
-		{
-			return;
-		}
-
-		for (Widget child : children)
+		for (Widget child : chatList.getDynamicChildren())
 		{
 			String rawText = child.getText();
-			if (rawText != null && !rawText.isEmpty())
+
+			// Skip empty widgets or World text widgets (e.g. "World 330" or "W476")
+			if (rawText != null && !rawText.isEmpty() && !rawText.startsWith("World ") && !rawText.matches("^W\\d+$"))
 			{
 				String cleanName = Text.removeTags(rawText).trim();
+				String std = cleanOsrsName(cleanName);
 
-				// Replace underscores with spaces to guarantee a match against the ban list
-				String standardizedName = Text.standardize(cleanName).replace('_', ' ');
+				java.awt.Color colorToSet = null;
 
-				// Priority 1: Ban List check overrides everything else
-				if (config.enableBanList() && bannedPlayers.contains(standardizedName))
+				if (config.enableBanList() && bannedPlayers.contains(std))
+					colorToSet = config.banListColor();
+				else if (config.pmCheckerHighlight() && client.isFriended(cleanName, true))
+					colorToSet = config.pmCheckerColor();
+				else if (config.highlightOnFl() && client.isFriended(cleanName, false))
+					colorToSet = config.flHighlightColor();
+
+				if (colorToSet != null)
 				{
-					child.setTextColor(config.banListColor().getRGB());
-					continue;
-				}
-
-				// Priority 2 & 3: efficiently check if the player is on the friends list at all
-				if (client.isFriended(cleanName, false))
-				{
-					// Check if they are specifically online
-					if (config.pmCheckerHighlight() && client.isFriended(cleanName, true))
+					// Strip hardcoded OSRS color tags (like <col=ffffff> for the local player) so our setTextColor applies
+					if (rawText.contains("<col=") || rawText.contains("</col>"))
 					{
-						child.setTextColor(config.pmCheckerColor().getRGB());
+						child.setText(rawText.replaceAll("(?i)<col=[^>]+>", "").replace("</col>", ""));
 					}
-					else if (config.highlightOnFl())
-					{
-						// If they are offline, OR if PM checker is disabled, apply the FL color
-						child.setTextColor(config.flHighlightColor().getRGB());
-					}
+					child.setTextColor(colorToSet.getRGB());
 				}
 			}
 		}
