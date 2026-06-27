@@ -103,6 +103,15 @@ public class ZealgainsPlugin extends Plugin
 	private boolean debugMode = false;
 	private final Set<String> disconnectAlerted = new LinkedHashSet<>();
 
+	// Pending calls: slots rejected by sequential check, held per player until prerequisite is filled
+	private final Map<String, Set<Integer>> pendingRedCalls = new HashMap<>();
+	private final Map<String, Set<Integer>> pendingBlueCalls = new HashMap<>();
+
+	// Avatar dump tracking
+	private int maxBlueHealth = 0, maxBlueStrength = 0;
+	private int maxRedHealth = 0, maxRedStrength = 0;
+	private boolean blueAvatarDumpAlerted = false, redAvatarDumpAlerted = false;
+
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
 
@@ -243,6 +252,8 @@ public class ZealgainsPlugin extends Plugin
 			dumpReminderFired = false;
 			return;
 		}
+
+		checkAvatarDump();
 
 		if (dumpReminderFired) return;
 
@@ -447,6 +458,7 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
+		Map<String, Set<Integer>> pendingMap = team.equals("r") ? pendingRedCalls : pendingBlueCalls;
 		boolean overCallAlertTriggered = false;
 
 		for (char c : kills.toCharArray())
@@ -456,7 +468,13 @@ public class ZealgainsPlugin extends Plugin
 			if (killNumber == 5 && !validateKill5(team, sender, secondsRemaining)) continue;
 
 			// Sequential check: kill N requires kill N-1 to be claimed first
-			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1)) continue;
+			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1))
+			{
+				// Hold it as pending — if they correct their order later, it auto-resolves
+				if (!targetMap.containsKey(killNumber))
+					pendingMap.computeIfAbsent(sender, k -> new LinkedHashSet<>()).add(killNumber);
+				continue;
+			}
 
 			// Before 12:00, cap at 3 kills — reject and free the slot for others
 			if (secondsRemaining > 720 && getKillsClaimedBy(sender) >= 3)
@@ -472,8 +490,9 @@ public class ZealgainsPlugin extends Plugin
 			String existing = targetMap.putIfAbsent(killNumber, sender);
 			if (existing == null)
 			{
-				// Successfully claimed
+				// Successfully claimed — flush any pending slots this player held for this team
 				if (killNumber == 5) kill5Tick = client.getTickCount();
+				resolvePendingCalls(team, sender, secondsRemaining);
 			}
 			else
 			{
@@ -563,8 +582,13 @@ public class ZealgainsPlugin extends Plugin
 		redRunners.clear();
 		blueRunners.clear();
 		disconnectAlerted.clear();
+		pendingRedCalls.clear();
+		pendingBlueCalls.clear();
 		kill5Tick = -1;
 		dumpReminderFired = false;
+		maxBlueHealth = 0; maxBlueStrength = 0;
+		maxRedHealth = 0; maxRedStrength = 0;
+		blueAvatarDumpAlerted = false; redAvatarDumpAlerted = false;
 
 		if (panel != null)
 		{
@@ -606,6 +630,171 @@ public class ZealgainsPlugin extends Plugin
 		return total;
 	}
 
+	private void checkAvatarDump()
+	{
+		Widget blueHealthW   = client.getWidget(375, 15);
+		Widget blueStrengthW = client.getWidget(375, 19);
+		Widget redHealthW    = client.getWidget(375, 16);
+		Widget redStrengthW  = client.getWidget(375, 20);
+
+		if (blueHealthW == null || blueStrengthW == null ||
+			redHealthW == null || redStrengthW == null) return;
+
+		int blueHealth   = parseWidgetValue(blueHealthW.getText());
+		int blueStrength = parseWidgetValue(blueStrengthW.getText());
+		int redHealth    = parseWidgetValue(redHealthW.getText());
+		int redStrength  = parseWidgetValue(redStrengthW.getText());
+
+		if (blueHealth < 0 || blueStrength < 0 || redHealth < 0 || redStrength < 0) return;
+
+		// Track observed maximums so full HP can be detected without hardcoding
+		if (blueHealth > maxBlueHealth)     maxBlueHealth   = blueHealth;
+		if (blueStrength > maxBlueStrength) maxBlueStrength = blueStrength;
+		if (redHealth > maxRedHealth)       maxRedHealth    = redHealth;
+		if (redStrength > maxRedStrength)   maxRedStrength  = redStrength;
+
+		if (maxBlueHealth == 0 || maxBlueStrength == 0 || maxRedHealth == 0 || maxRedStrength == 0) return;
+
+		// Determine which avatar alerts to show based on team filter
+		boolean showBlueAlert, showRedAlert;
+		if (config.overrideCallFilter())
+		{
+			showBlueAlert = true;
+			showRedAlert  = true;
+		}
+		else
+		{
+			// Derive team from local player's own calls; unknown = suppress all until a call is made
+			String localName = client.getLocalPlayer() != null ? Text.removeTags(client.getLocalPlayer().getName()) : null;
+			String localTeam = localName != null ? getSenderTeam(localName) : null;
+			showBlueAlert = "r".equals(localTeam);
+			showRedAlert  = "b".equals(localTeam);
+		}
+
+		// Blue avatar at full → Red team should dump
+		boolean blueReady = blueHealth >= maxBlueHealth && blueStrength >= maxBlueStrength;
+		if (blueReady && !blueAvatarDumpAlerted && showBlueAlert)
+		{
+			Widget redKillsW = client.getWidget(375, 12);
+			int nextRedKill = (redKillsW != null ? Math.max(0, parseWidgetValue(redKillsW.getText())) : 0) + 1;
+			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
+			if (nextRedKill == 5 && !isDumpWindowOpen())
+			{
+				// wait — do not set alerted so we re-check next tick
+			}
+			else
+			{
+				if (nextRedKill > 1)
+				{
+					String msg = "Blue avatar is ready for " + ordinal(nextRedKill) + " dump!";
+					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff9900>Zealgains: " + msg + "</col>", null);
+					notifier.notify(config.avatarAlerts(), msg);
+				}
+				blueAvatarDumpAlerted = true;
+			}
+		}
+		else if (!blueReady)
+		{
+			blueAvatarDumpAlerted = false;
+		}
+
+		// Red avatar at full → Blue team should dump
+		boolean redReady = redHealth >= maxRedHealth && redStrength >= maxRedStrength;
+		if (redReady && !redAvatarDumpAlerted && showRedAlert)
+		{
+			Widget blueKillsW = client.getWidget(375, 11);
+			int nextBlueKill = (blueKillsW != null ? Math.max(0, parseWidgetValue(blueKillsW.getText())) : 0) + 1;
+			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
+			if (nextBlueKill == 5 && !isDumpWindowOpen())
+			{
+				// wait — do not set alerted so we re-check next tick
+			}
+			else
+			{
+				if (nextBlueKill > 1)
+				{
+					String msg = "Red avatar is ready for " + ordinal(nextBlueKill) + " dump!";
+					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff9900>Zealgains: " + msg + "</col>", null);
+					notifier.notify(config.avatarAlerts(), msg);
+				}
+				redAvatarDumpAlerted = true;
+			}
+		}
+		else if (!redReady)
+		{
+			redAvatarDumpAlerted = false;
+		}
+	}
+
+	private String ordinal(int n)
+	{
+		switch (n)
+		{
+			case 1:  return "1st";
+			case 2:  return "2nd";
+			case 3:  return "3rd";
+			default: return n + "th";
+		}
+	}
+
+	private boolean isDumpWindowOpen()
+	{
+		FriendsChatManager fcm = client.getFriendsChatManager();
+		int memberCount = fcm != null ? fcm.getCount() : 0;
+		int threshold = memberCount >= 40 ? 285 : 300;
+		int timeRemaining = getGameTimeRemaining();
+		return timeRemaining != -1 && timeRemaining <= threshold;
+	}
+
+	private int parseWidgetValue(String text)
+	{
+		if (text == null || text.isEmpty()) return -1;
+		String cleaned = Text.removeTags(text).trim();
+		StringBuilder digits = new StringBuilder();
+		for (char c : cleaned.toCharArray())
+		{
+			if (Character.isDigit(c)) digits.append(c);
+			else if (digits.length() > 0) break;
+		}
+		if (digits.length() == 0) return -1;
+		try { return Integer.parseInt(digits.toString()); }
+		catch (NumberFormatException ignored) { return -1; }
+	}
+
+	private void resolvePendingCalls(String team, String sender, int secondsRemaining)
+	{
+		Map<String, Set<Integer>> pendingMap = team.equals("r") ? pendingRedCalls : pendingBlueCalls;
+		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
+		Set<Integer> pending = pendingMap.get(sender);
+		if (pending == null || pending.isEmpty()) return;
+
+		boolean resolved;
+		do
+		{
+			resolved = false;
+			Set<Integer> toRemove = new LinkedHashSet<>();
+			for (int slot : pending)
+			{
+				if (targetMap.containsKey(slot)) { toRemove.add(slot); continue; } // taken by someone else
+				if (slot > 1 && !targetMap.containsKey(slot - 1)) continue;        // prereq still missing
+				if (slot == 5 && !validateKill5(team, sender, secondsRemaining)) { toRemove.add(slot); continue; }
+				if (secondsRemaining > 720 && getKillsClaimedBy(sender) >= 3)      { toRemove.add(slot); break; }
+
+				String existing = targetMap.putIfAbsent(slot, sender);
+				toRemove.add(slot);
+				if (existing == null)
+				{
+					if (slot == 5) kill5Tick = client.getTickCount();
+					resolved = true;
+				}
+			}
+			pending.removeAll(toRemove);
+		}
+		while (resolved && !pending.isEmpty());
+
+		if (panel != null) panel.updateKills(redKills, blueKills);
+	}
+
 	private void reshuffleTeam(String team, StringBuilder alertMsg)
 	{
 		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
@@ -645,8 +834,11 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		// Open slots in compact form e.g. "R45"
+		// Blue caps at 4 unless timer is at/below 12:00 and R5 hasn't been claimed
+		int timeRemaining = getGameTimeRemaining();
+		int maxSlot = (team.equals("b") && (timeRemaining == -1 || timeRemaining > 720 || redKills.containsKey(5))) ? 4 : 5;
 		StringBuilder open = new StringBuilder(T);
-		for (int i = count + 1; i <= 5; i++) open.append(i);
+		for (int i = count + 1; i <= maxSlot; i++) open.append(i);
 
 		if (alertMsg.length() > 0) alertMsg.append(" | ");
 		alertMsg.append(moves);

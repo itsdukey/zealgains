@@ -2,10 +2,13 @@ package com.zealgains;
 
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.util.LinkBrowser;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.Map;
 import java.util.Set;
 
@@ -30,6 +33,33 @@ public class ZealgainsPanel extends PluginPanel
         title.setForeground(Color.WHITE);
         title.setAlignmentX(Component.CENTER_ALIGNMENT);
         layoutPanel.add(title);
+        layoutPanel.add(Box.createRigidArea(new Dimension(0, 6)));
+
+        JLabel discordLink = new JLabel("discord.gg/riseabove");
+        discordLink.setForeground(new Color(0x5865F2));
+        discordLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        discordLink.setAlignmentX(Component.CENTER_ALIGNMENT);
+        discordLink.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                LinkBrowser.browse("https://discord.gg/riseabove");
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e)
+            {
+                discordLink.setText("<html><u>discord.gg/riseabove</u></html>");
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e)
+            {
+                discordLink.setText("discord.gg/riseabove");
+            }
+        });
+        layoutPanel.add(discordLink);
         layoutPanel.add(Box.createRigidArea(new Dimension(0, 15)));
 
         redContainer.setLayout(new BoxLayout(redContainer, BoxLayout.Y_AXIS));
