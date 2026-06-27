@@ -99,8 +99,6 @@ public class ZealgainsPlugin extends Plugin
 
 	private int kill5Tick = -1;
 	private int cachedMajorityWorld = -1;
-	private boolean dumpReminderFired = false;
-	private boolean debugMode = false;
 	private final Set<String> disconnectAlerted = new LinkedHashSet<>();
 
 	// Pending calls: slots rejected by sequential check, held per player until prerequisite is filled
@@ -111,6 +109,11 @@ public class ZealgainsPlugin extends Plugin
 	private int maxBlueHealth = 0, maxBlueStrength = 0;
 	private int maxRedHealth = 0, maxRedStrength = 0;
 	private boolean blueAvatarDumpAlerted = false, redAvatarDumpAlerted = false;
+
+	// End-of-game summary tracking
+	private int lastGameRedScore = 0;
+	private int lastGameBlueScore = 0;
+	private int lastKnownGameSeconds = -1;
 
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
@@ -247,28 +250,16 @@ public class ZealgainsPlugin extends Plugin
 	{
 		int seconds = getGameTimeRemaining();
 
-		if (seconds == -1)
-		{
-			dumpReminderFired = false;
-			return;
-		}
+		if (seconds == -1) return;
+
+		// Capture live game state so the end-of-game summary has accurate final values
+		lastKnownGameSeconds = seconds;
+		Widget redScoreW = client.getWidget(375, 12);
+		Widget blueScoreW = client.getWidget(375, 11);
+		if (redScoreW != null) lastGameRedScore = Math.max(0, parseWidgetValue(redScoreW.getText()));
+		if (blueScoreW != null) lastGameBlueScore = Math.max(0, parseWidgetValue(blueScoreW.getText()));
 
 		checkAvatarDump();
-
-		if (dumpReminderFired) return;
-
-		FriendsChatManager fcm = client.getFriendsChatManager();
-		int memberCount = fcm != null ? fcm.getCount() : 0;
-		int dumpThreshold = memberCount >= 40 ? 285 : 300; // 4:45 or 5:00
-
-		if (seconds <= dumpThreshold)
-		{
-			String timeStr = memberCount >= 40 ? "4:45" : "5:00";
-			String msg = "TIME TO DUMP! " + timeStr + " remaining — dump the winning kill now!";
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Zealgains Alert: " + msg + "</col>", null);
-			notifier.notify(config.dumpReminder(), msg);
-			dumpReminderFired = true;
-		}
 	}
 
 	// --- CHAT MESSAGE HANDLER ---
@@ -301,16 +292,6 @@ public class ZealgainsPlugin extends Plugin
 
 		String sender = Text.removeTags(event.getName());
 		String compressedMessage = message.replaceAll("\\s+", "");
-
-		if (debugMode)
-		{
-			debugMode = false;
-			StringBuilder chars = new StringBuilder("raw[");
-			for (int i = 0; i < Math.min(compressedMessage.length(), 6); i++)
-				chars.append((int) compressedMessage.charAt(i)).append(",");
-			chars.append("] \"").append(compressedMessage, 0, Math.min(compressedMessage.length(), 10)).append("\"");
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains Debug: " + chars, null);
-		}
 
 		// Runner callouts — decode <gt>/<lt> before tag-stripping so > survives
 		String runnerMsg = Text.removeTags(event.getMessage().replace("<gt>", ">").replace("<lt>", "<"))
@@ -418,11 +399,6 @@ public class ZealgainsPlugin extends Plugin
 				if (reshuffleMsg.length() > 0) msg += "— " + reshuffleMsg;
 				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", msg, null);
 			}
-		}
-		else if (event.getCommand().equalsIgnoreCase("zgdebug"))
-		{
-			debugMode = !debugMode;
-			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Debug mode " + (debugMode ? "ON" : "OFF") + " — next FC message will show raw chars.", null);
 		}
 		else if (event.getCommand().equalsIgnoreCase("zgsync"))
 		{
@@ -561,16 +537,35 @@ public class ZealgainsPlugin extends Plugin
 	private void printGameSummary()
 	{
 		if (redKills.isEmpty() && blueKills.isEmpty()) return;
-		StringBuilder sb = new StringBuilder("Call Summary — ");
+
+		StringBuilder red = new StringBuilder();
 		for (int i = 1; i <= 5; i++)
 		{
-			if (redKills.containsKey(i)) sb.append("R").append(i).append(": ").append(redKills.get(i)).append("  ");
+			if (redKills.containsKey(i))
+				red.append("R").append(i).append(": ").append(redKills.get(i)).append("  ");
 		}
+
+		StringBuilder blue = new StringBuilder();
 		for (int i = 1; i <= 5; i++)
 		{
-			if (blueKills.containsKey(i)) sb.append("B").append(i).append(": ").append(blueKills.get(i)).append("  ");
+			if (blueKills.containsKey(i))
+				blue.append("B").append(i).append(": ").append(blueKills.get(i)).append("  ");
 		}
-		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", sb.toString().trim(), null);
+
+		String timeStr = lastKnownGameSeconds >= 0
+				? String.format("%d:%02d", lastKnownGameSeconds / 60, lastKnownGameSeconds % 60)
+				: "unknown";
+
+		String header  = "<col=ffff00>═══ Zealgains: Game Summary ═══</col>";
+		String redLine = red.length() > 0   ? "<col=ff4444>Red Calls — "  + red.toString().trim()  + "</col>" : null;
+		String blueLine = blue.length() > 0 ? "<col=44aaff>Blue Calls — " + blue.toString().trim() + "</col>" : null;
+		String scoreLine = "<col=ffffff>Final Score — Red " + lastGameRedScore + " / Blue " + lastGameBlueScore
+				+ "  |  Time remaining: " + timeStr + "</col>";
+
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", header, null);
+		if (redLine  != null) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", redLine,  null);
+		if (blueLine != null) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", blueLine, null);
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", scoreLine, null);
 	}
 
 	// --- RESET ---
@@ -585,10 +580,10 @@ public class ZealgainsPlugin extends Plugin
 		pendingRedCalls.clear();
 		pendingBlueCalls.clear();
 		kill5Tick = -1;
-		dumpReminderFired = false;
 		maxBlueHealth = 0; maxBlueStrength = 0;
 		maxRedHealth = 0; maxRedStrength = 0;
 		blueAvatarDumpAlerted = false; redAvatarDumpAlerted = false;
+		lastGameRedScore = 0; lastGameBlueScore = 0; lastKnownGameSeconds = -1;
 
 		if (panel != null)
 		{
@@ -686,7 +681,17 @@ public class ZealgainsPlugin extends Plugin
 			{
 				if (nextRedKill > 1)
 				{
-					String msg = "Blue avatar is ready for " + ordinal(nextRedKill) + " dump!";
+					String msg;
+					if (nextRedKill == 5)
+					{
+						FriendsChatManager fcm = client.getFriendsChatManager();
+						String timeStr = (fcm != null && fcm.getCount() >= 40) ? "4:45" : "5:00";
+						msg = "5th dump for Red at " + timeStr + " — Dump the winning kill now!";
+					}
+					else
+					{
+						msg = "Blue avatar is ready for " + ordinal(nextRedKill) + " dump!";
+					}
 					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff9900>Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
 				}
@@ -713,7 +718,17 @@ public class ZealgainsPlugin extends Plugin
 			{
 				if (nextBlueKill > 1)
 				{
-					String msg = "Red avatar is ready for " + ordinal(nextBlueKill) + " dump!";
+					String msg;
+					if (nextBlueKill == 5)
+					{
+						FriendsChatManager fcm = client.getFriendsChatManager();
+						String timeStr = (fcm != null && fcm.getCount() >= 40) ? "4:45" : "5:00";
+						msg = "5th dump for Blue at " + timeStr + " — Dump the winning kill now!";
+					}
+					else
+					{
+						msg = "Red avatar is ready for " + ordinal(nextBlueKill) + " dump!";
+					}
 					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff9900>Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
 				}

@@ -27,7 +27,8 @@ public class ZealgainsOverlay extends OverlayPanel
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        if (config.displayMode() == ZealgainsConfig.DisplayMode.SIDE_PANEL) return null;
+        if (config.displayMode() == ZealgainsConfig.DisplayMode.SIDE_PANEL
+                || config.displayMode() == ZealgainsConfig.DisplayMode.NONE) return null;
         if (config.hideOutsideSoulWars() && !plugin.isInSoulWarsGame()) return null;
 
         panelComponent.getChildren().clear();
