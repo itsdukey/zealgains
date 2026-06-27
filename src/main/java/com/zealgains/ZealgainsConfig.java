@@ -55,10 +55,22 @@ public interface ZealgainsConfig extends Config
 	}
 
 	@ConfigItem(
+			keyName = "showGameStatus",
+			name = "Show Timer & Score",
+			description = "Display the live game timer and current kill score in the overlay and side panel",
+			position = 2,
+			section = generalSection
+	)
+	default boolean showGameStatus()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 			keyName = "hideOutsideSoulWars",
 			name = "Hide Overlay Outside Game",
 			description = "Only show the on-screen overlay when inside a Soul Wars game",
-			position = 2,
+			position = 3,
 			section = generalSection
 	)
 	default boolean hideOutsideSoulWars()
@@ -70,7 +82,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "avatarAlerts",
 			name = "Avatar Ready Alerts",
 			description = "Alert when an avatar is at full health and strength. For the 5th kill, also includes the dump time (5:00 or 4:45 with 40+ members).",
-			position = 3,
+			position = 4,
 			section = generalSection
 	)
 	default Notification avatarAlerts()

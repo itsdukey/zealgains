@@ -126,6 +126,8 @@ public class ZealgainsPlugin extends Plugin
 	public Map<Integer, String> getBlueKills() { return blueKills; }
 	public Set<String> getRedRunners() { return redRunners; }
 	public Set<String> getBlueRunners() { return blueRunners; }
+	public int getRedScore() { return lastGameRedScore; }
+	public int getBlueScore() { return lastGameBlueScore; }
 
 	@Override
 	protected void startUp() throws Exception
@@ -258,6 +260,9 @@ public class ZealgainsPlugin extends Plugin
 		Widget blueScoreW = client.getWidget(375, 11);
 		if (redScoreW != null) lastGameRedScore = Math.max(0, parseWidgetValue(redScoreW.getText()));
 		if (blueScoreW != null) lastGameBlueScore = Math.max(0, parseWidgetValue(blueScoreW.getText()));
+
+		if (panel != null)
+			panel.updateGameStatus(config.showGameStatus() ? seconds : -1, lastGameRedScore, lastGameBlueScore);
 
 		checkAvatarDump();
 	}
@@ -589,6 +594,7 @@ public class ZealgainsPlugin extends Plugin
 		{
 			panel.updateKills(redKills, blueKills);
 			panel.updateRunners(redRunners, blueRunners);
+			panel.updateGameStatus(-1, 0, 0);
 		}
 	}
 

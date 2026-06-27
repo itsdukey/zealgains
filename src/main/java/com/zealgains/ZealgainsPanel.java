@@ -17,6 +17,9 @@ public class ZealgainsPanel extends PluginPanel
     private final JPanel redContainer = new JPanel();
     private final JPanel blueContainer = new JPanel();
     private final JPanel runnerContainer = new JPanel();
+    private final JPanel statusPanel = new JPanel();
+    private final JLabel timerLabel = new JLabel();
+    private final JLabel scoreLabel = new JLabel();
 
     public ZealgainsPanel(ZealgainsPlugin plugin)
     {
@@ -60,7 +63,21 @@ public class ZealgainsPanel extends PluginPanel
             }
         });
         layoutPanel.add(discordLink);
-        layoutPanel.add(Box.createRigidArea(new Dimension(0, 15)));
+        layoutPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+
+        // Live timer and score
+        statusPanel.setLayout(new BoxLayout(statusPanel, BoxLayout.Y_AXIS));
+        statusPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        statusPanel.setVisible(false);
+
+        timerLabel.setForeground(Color.YELLOW);
+        timerLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        scoreLabel.setForeground(Color.LIGHT_GRAY);
+        scoreLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        statusPanel.add(timerLabel);
+        statusPanel.add(scoreLabel);
+        layoutPanel.add(statusPanel);
+        layoutPanel.add(Box.createRigidArea(new Dimension(0, 10)));
 
         redContainer.setLayout(new BoxLayout(redContainer, BoxLayout.Y_AXIS));
         redContainer.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -121,6 +138,24 @@ public class ZealgainsPanel extends PluginPanel
                 }
             }
 
+            revalidate();
+            repaint();
+        });
+    }
+
+    public void updateGameStatus(int seconds, int redScore, int blueScore)
+    {
+        SwingUtilities.invokeLater(() -> {
+            if (seconds < 0)
+            {
+                statusPanel.setVisible(false);
+            }
+            else
+            {
+                timerLabel.setText(String.format("%d:%02d", seconds / 60, seconds % 60));
+                scoreLabel.setText("Red: " + redScore + "  /  Blue: " + blueScore);
+                statusPanel.setVisible(true);
+            }
             revalidate();
             repaint();
         });

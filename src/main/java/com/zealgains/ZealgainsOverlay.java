@@ -38,6 +38,21 @@ public class ZealgainsOverlay extends OverlayPanel
                 .color(Color.WHITE)
                 .build());
 
+        int timeRemaining = plugin.getGameTimeRemaining();
+
+        // Live timer and score
+        if (config.showGameStatus() && timeRemaining != -1)
+        {
+            int mins = timeRemaining / 60;
+            int secs = timeRemaining % 60;
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left(String.format("%d:%02d", mins, secs))
+                    .leftColor(Color.YELLOW)
+                    .right("R: " + plugin.getRedScore() + "  B: " + plugin.getBlueScore())
+                    .rightColor(Color.WHITE)
+                    .build());
+        }
+
         Map<Integer, String> rKills = plugin.getRedKills();
         Map<Integer, String> bKills = plugin.getBlueKills();
 
@@ -52,7 +67,6 @@ public class ZealgainsOverlay extends OverlayPanel
         }
 
         // Blue team calls
-        int timeRemaining = plugin.getGameTimeRemaining();
         boolean b5Visible = timeRemaining != -1 && timeRemaining <= 720 && !rKills.containsKey(5);
         panelComponent.getChildren().add(LineComponent.builder().left("Blue Team").leftColor(Color.CYAN).build());
         for (int i = 1; i <= 5; i++)
