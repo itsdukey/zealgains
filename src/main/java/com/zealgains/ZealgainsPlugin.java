@@ -14,6 +14,7 @@ import net.runelite.api.events.FriendsChatChanged;
 import net.runelite.api.events.FriendsChatMemberJoined;
 import net.runelite.api.events.FriendsChatMemberLeft;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.Notifier;
@@ -35,7 +36,10 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
+import java.awt.Color;
 import java.awt.image.BufferedImage;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -109,6 +113,7 @@ public class ZealgainsPlugin extends Plugin
 	private int maxBlueHealth = 0, maxBlueStrength = 0;
 	private int maxRedHealth = 0, maxRedStrength = 0;
 	private boolean blueAvatarDumpAlerted = false, redAvatarDumpAlerted = false;
+	private boolean blueEarlyDumpWarned = false, redEarlyDumpWarned = false;
 
 	// End-of-game summary tracking
 	private int lastGameRedScore = 0;
@@ -117,6 +122,8 @@ public class ZealgainsPlugin extends Plugin
 
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
+	// Tracks the local player's Soul Wars team; resets to 0 on any exit (idle-kick, normal end, lobby)
+	private static final int VARBIT_SOUL_WARS_TEAM = 3815;
 
 	private final Pattern callPattern = Pattern.compile("(?i)^\\s*([rb])([rb1-5]+)");
 	private final Pattern runnerPattern = Pattern.compile("(?i)^(?:[>^]([rb])|([rb])[>^])");
@@ -212,7 +219,7 @@ public class ZealgainsPlugin extends Plugin
 		{
 			String displayName = Text.removeTags(event.getMember().getName());
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-					"<col=ff0000>Zealgains: \"" + displayName + "\" was found on the banlist</col>", null);
+					"<col=" + colorToHex(config.alertBanColor()) + ">Zealgains: \"" + displayName + "\" was found on the banlist</col>", null);
 			notifier.notify(config.banListNotification(), "\"" + displayName + "\" was found on the banlist");
 		}
 	}
@@ -267,6 +274,20 @@ public class ZealgainsPlugin extends Plugin
 		checkAvatarDump();
 	}
 
+	// --- VARBIT HANDLER ---
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged event)
+	{
+		if (event.getVarbitId() != VARBIT_SOUL_WARS_TEAM) return;
+		if (event.getValue() != 0) return;
+		if (config.autoClear())
+		{
+			if (config.showGameSummary()) printGameSummary();
+			resetKills();
+		}
+	}
+
 	// --- CHAT MESSAGE HANDLER ---
 
 	@Subscribe
@@ -282,7 +303,7 @@ public class ZealgainsPlugin extends Plugin
 			{
 				if (config.autoClear())
 				{
-					printGameSummary();
+					if (config.showGameSummary()) printGameSummary();
 					resetKills();
 				}
 				return;
@@ -360,8 +381,24 @@ public class ZealgainsPlugin extends Plugin
 			String[] args = event.getArguments();
 			if (args == null || args.length == 0)
 			{
-				resetKills();
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: All calls reset.", null);
+				SwingUtilities.invokeLater(() ->
+				{
+					int choice = JOptionPane.showConfirmDialog(
+							null,
+							"Are you sure you want to reset the entire board?",
+							"Zealgains — Confirm Reset",
+							JOptionPane.YES_NO_OPTION,
+							JOptionPane.WARNING_MESSAGE
+					);
+					if (choice == JOptionPane.YES_OPTION)
+					{
+						clientThread.invokeLater(() ->
+						{
+							resetKills();
+							client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: All calls reset.", null);
+						});
+					}
+				});
 				return;
 			}
 
@@ -561,11 +598,17 @@ public class ZealgainsPlugin extends Plugin
 				? String.format("%d:%02d", lastKnownGameSeconds / 60, lastKnownGameSeconds % 60)
 				: "unknown";
 
-		String header  = "<col=ffff00>═══ Zealgains: Game Summary ═══</col>";
-		String redLine = red.length() > 0   ? "<col=ff4444>Red Calls — "  + red.toString().trim()  + "</col>" : null;
-		String blueLine = blue.length() > 0 ? "<col=44aaff>Blue Calls — " + blue.toString().trim() + "</col>" : null;
-		String scoreLine = "<col=ffffff>Final Score — Red " + lastGameRedScore + " / Blue " + lastGameBlueScore
-				+ "  |  Time remaining: " + timeStr + "</col>";
+		// Prefer live widget read so the score is accurate even if the interface closes on the same tick as game end
+		Widget redScoreW  = client.getWidget(375, 12);
+		Widget blueScoreW = client.getWidget(375, 11);
+		int redScore  = (redScoreW  != null) ? Math.max(0, parseWidgetValue(redScoreW.getText()))  : lastGameRedScore;
+		int blueScore = (blueScoreW != null) ? Math.max(0, parseWidgetValue(blueScoreW.getText())) : lastGameBlueScore;
+
+		String header  = "<col=" + colorToHex(config.summaryHeaderColor()) + ">=== Zealgains: Game Summary ===</col>";
+		String redLine = red.length() > 0   ? "<col=" + colorToHex(config.summaryRedColor())  + ">Red Calls — "  + red.toString().trim()  + "</col>" : null;
+		String blueLine = blue.length() > 0 ? "<col=" + colorToHex(config.summaryBlueColor()) + ">Blue Calls — " + blue.toString().trim() + "</col>" : null;
+		String scoreLine = "<col=" + colorToHex(config.summaryScoreColor()) + ">Final Score — Red " + redScore + " / Blue " + blueScore
+				+ "  -  Time remaining: " + timeStr + "</col>";
 
 		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", header, null);
 		if (redLine  != null) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", redLine,  null);
@@ -588,6 +631,7 @@ public class ZealgainsPlugin extends Plugin
 		maxBlueHealth = 0; maxBlueStrength = 0;
 		maxRedHealth = 0; maxRedStrength = 0;
 		blueAvatarDumpAlerted = false; redAvatarDumpAlerted = false;
+		blueEarlyDumpWarned = false; redEarlyDumpWarned = false;
 		lastGameRedScore = 0; lastGameBlueScore = 0; lastKnownGameSeconds = -1;
 
 		if (panel != null)
@@ -619,7 +663,7 @@ public class ZealgainsPlugin extends Plugin
 
 	private void sendAlert(String message)
 	{
-		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Zealgains Alert: " + message + "</col>", null);
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.alertCallColor()) + ">Zealgains Alert: " + message + "</col>", null);
 		notifier.notify(config.enableNotifications(), message);
 	}
 
@@ -681,7 +725,19 @@ public class ZealgainsPlugin extends Plugin
 			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
 			if (nextRedKill == 5 && !isDumpWindowOpen())
 			{
-				// wait — do not set alerted so we re-check next tick
+				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
+				if (!blueEarlyDumpWarned)
+				{
+					FriendsChatManager fcm = client.getFriendsChatManager();
+					int timeRemaining = getGameTimeRemaining();
+					if (fcm != null && fcm.getCount() >= 40 && timeRemaining != -1 && timeRemaining <= 305)
+					{
+						String warn = "40+ people in FC — do NOT dump at 5:00! Wait until 4:45.";
+						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + warn + "</col>", null);
+						notifier.notify(config.avatarAlerts(), warn);
+						blueEarlyDumpWarned = true;
+					}
+				}
 			}
 			else
 			{
@@ -698,7 +754,7 @@ public class ZealgainsPlugin extends Plugin
 					{
 						msg = "Blue avatar is ready for " + ordinal(nextRedKill) + " dump!";
 					}
-					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff9900>Zealgains: " + msg + "</col>", null);
+					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
 				}
 				blueAvatarDumpAlerted = true;
@@ -707,6 +763,7 @@ public class ZealgainsPlugin extends Plugin
 		else if (!blueReady)
 		{
 			blueAvatarDumpAlerted = false;
+			blueEarlyDumpWarned = false;
 		}
 
 		// Red avatar at full → Blue team should dump
@@ -718,7 +775,19 @@ public class ZealgainsPlugin extends Plugin
 			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
 			if (nextBlueKill == 5 && !isDumpWindowOpen())
 			{
-				// wait — do not set alerted so we re-check next tick
+				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
+				if (!redEarlyDumpWarned)
+				{
+					FriendsChatManager fcm = client.getFriendsChatManager();
+					int timeRemaining = getGameTimeRemaining();
+					if (fcm != null && fcm.getCount() >= 40 && timeRemaining != -1 && timeRemaining <= 305)
+					{
+						String warn = "40+ people in FC — do NOT dump at 5:00! Wait until 4:45.";
+						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + warn + "</col>", null);
+						notifier.notify(config.avatarAlerts(), warn);
+						redEarlyDumpWarned = true;
+					}
+				}
 			}
 			else
 			{
@@ -735,7 +804,7 @@ public class ZealgainsPlugin extends Plugin
 					{
 						msg = "Red avatar is ready for " + ordinal(nextBlueKill) + " dump!";
 					}
-					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff9900>Zealgains: " + msg + "</col>", null);
+					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
 				}
 				redAvatarDumpAlerted = true;
@@ -744,6 +813,7 @@ public class ZealgainsPlugin extends Plugin
 		else if (!redReady)
 		{
 			redAvatarDumpAlerted = false;
+			redEarlyDumpWarned = false;
 		}
 	}
 
@@ -756,6 +826,11 @@ public class ZealgainsPlugin extends Plugin
 			case 3:  return "3rd";
 			default: return n + "th";
 		}
+	}
+
+	private String colorToHex(Color c)
+	{
+		return String.format("%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
 	}
 
 	private boolean isDumpWindowOpen()
