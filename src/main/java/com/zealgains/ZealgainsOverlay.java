@@ -24,6 +24,14 @@ public class ZealgainsOverlay extends OverlayPanel
         setPosition(OverlayPosition.TOP_LEFT);
     }
 
+    private Color tint(Color c)
+    {
+        int pct = config.overlayOpacity();
+        if (pct >= 100) return c;
+        int alpha = Math.max(0, (int)(c.getAlpha() * pct / 100.0));
+        return new Color(c.getRed(), c.getGreen(), c.getBlue(), alpha);
+    }
+
     @Override
     public Dimension render(Graphics2D graphics)
     {
@@ -31,11 +39,12 @@ public class ZealgainsOverlay extends OverlayPanel
                 || config.displayMode() == ZealgainsConfig.DisplayMode.NONE) return null;
         if (config.hideOutsideSoulWars() && !plugin.isInSoulWarsGame()) return null;
 
+        panelComponent.setBackgroundColor(tint(config.overlayBackgroundColor()));
         panelComponent.getChildren().clear();
 
         panelComponent.getChildren().add(TitleComponent.builder()
                 .text("Zealgains")
-                .color(Color.WHITE)
+                .color(tint(Color.WHITE))
                 .build());
 
         int timeRemaining = plugin.getGameTimeRemaining();
@@ -47,34 +56,60 @@ public class ZealgainsOverlay extends OverlayPanel
             int secs = timeRemaining % 60;
             panelComponent.getChildren().add(LineComponent.builder()
                     .left(String.format("%d:%02d", mins, secs))
-                    .leftColor(Color.YELLOW)
+                    .leftColor(tint(config.overlayTimerColor()))
                     .right("R: " + plugin.getRedScore() + "  B: " + plugin.getBlueScore())
-                    .rightColor(Color.WHITE)
+                    .rightColor(tint(config.overlayScoreColor()))
                     .build());
+        }
+
+        int lobbyCount = plugin.getLobbyPlayerCount();
+        if (lobbyCount > 0)
+        {
+            if (timeRemaining != -1)
+            {
+                // Always show frozen player count during a game
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left("Players: " + lobbyCount)
+                        .leftColor(tint(config.overlayLobbyCountColor()))
+                        .build());
+            }
+            else if (config.showLobbyCount())
+            {
+                // Live lobby count is opt-in via Developer Options
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left("Lobby: " + lobbyCount)
+                        .leftColor(tint(config.overlayLobbyCountColor()))
+                        .build());
+            }
         }
 
         Map<Integer, String> rKills = plugin.getRedKills();
         Map<Integer, String> bKills = plugin.getBlueKills();
 
-        // Red team calls
-        panelComponent.getChildren().add(LineComponent.builder().left("Red Team").leftColor(Color.RED).build());
+        // Red team calls — R5 hidden if B5 has been claimed (mutually exclusive)
+        panelComponent.getChildren().add(LineComponent.builder().left("Red Team").leftColor(tint(config.overlayRedColor())).build());
         for (int i = 1; i <= 5; i++)
         {
+            if (i == 5 && bKills.containsKey(5)) continue;
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Call " + i)
+                    .leftColor(tint(config.overlayCallLabelColor()))
                     .right(rKills.getOrDefault(i, "-"))
+                    .rightColor(tint(config.overlayCallNameColor()))
                     .build());
         }
 
         // Blue team calls
         boolean b5Visible = timeRemaining != -1 && timeRemaining <= 720 && !rKills.containsKey(5);
-        panelComponent.getChildren().add(LineComponent.builder().left("Blue Team").leftColor(Color.CYAN).build());
+        panelComponent.getChildren().add(LineComponent.builder().left("Blue Team").leftColor(tint(config.overlayBlueColor())).build());
         for (int i = 1; i <= 5; i++)
         {
             if (i == 5 && !b5Visible) continue;
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Call " + i)
+                    .leftColor(tint(config.overlayCallLabelColor()))
                     .right(bKills.getOrDefault(i, "-"))
+                    .rightColor(tint(config.overlayCallNameColor()))
                     .build());
         }
 
@@ -83,19 +118,19 @@ public class ZealgainsOverlay extends OverlayPanel
         Set<String> bRunners = plugin.getBlueRunners();
         if (!rRunners.isEmpty() || !bRunners.isEmpty())
         {
-            panelComponent.getChildren().add(LineComponent.builder().left("Runners").leftColor(Color.ORANGE).build());
+            panelComponent.getChildren().add(LineComponent.builder().left("Runners").leftColor(tint(config.overlayRunnersColor())).build());
             if (!rRunners.isEmpty())
             {
                 panelComponent.getChildren().add(LineComponent.builder()
                         .left(String.join(", ", rRunners))
-                        .leftColor(Color.RED)
+                        .leftColor(tint(config.overlayRedColor()))
                         .build());
             }
             if (!bRunners.isEmpty())
             {
                 panelComponent.getChildren().add(LineComponent.builder()
                         .left(String.join(", ", bRunners))
-                        .leftColor(Color.CYAN)
+                        .leftColor(tint(config.overlayBlueColor()))
                         .build());
             }
         }

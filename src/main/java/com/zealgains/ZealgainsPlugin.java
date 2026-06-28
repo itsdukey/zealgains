@@ -7,6 +7,16 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.FriendsChatManager;
 import net.runelite.api.FriendsChatMember;
+import net.runelite.api.FriendsChatRank;
+import net.runelite.api.GameObject;
+import net.runelite.api.InventoryID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+import net.runelite.api.Scene;
+import net.runelite.api.Tile;
+import net.runelite.api.events.GameObjectDespawned;
+import net.runelite.api.events.GameObjectSpawned;
+import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.CommandExecuted;
@@ -75,6 +85,9 @@ public class ZealgainsPlugin extends Plugin
 	private ZealgainsOverlay overlay;
 
 	@Inject
+	private ZealgainsObeliskOverlay obeliskOverlay;
+
+	@Inject
 	private Notifier notifier;
 
 	@Inject
@@ -85,6 +98,9 @@ public class ZealgainsPlugin extends Plugin
 
 	@Inject
 	private ScheduledExecutorService executor;
+
+	@Inject
+	private ConfigManager configManager;
 
 	private ZealgainsPanel panel;
 	private NavigationButton navButton;
@@ -105,11 +121,18 @@ public class ZealgainsPlugin extends Plugin
 	private int cachedMajorityWorld = -1;
 	private final Set<String> disconnectAlerted = new LinkedHashSet<>();
 
-	// Pending calls: slots rejected by sequential check, held per player until prerequisite is filled
-	private final Map<String, Set<Integer>> pendingRedCalls = new HashMap<>();
-	private final Map<String, Set<Integer>> pendingBlueCalls = new HashMap<>();
+	// Soul Obelisk game object IDs (uncontrolled / blue-controlled / red-controlled)
+	private static final int OBELISK_ID_NONE = 40449;
+	private static final int OBELISK_ID_BLUE = 40450;
+	private static final int OBELISK_ID_RED  = 40451;
+
+	private GameObject trackedObelisk  = null;
+	private boolean obeliskWarnActive  = false;
+	// "r" = red team, "b" = blue team, null = unknown; set by varbit 3815 (1=blue, 2=red)
+	private String varbitTeam = null;
 
 	// Avatar dump tracking
+	private static final int SOUL_FRAGMENT_ITEM_ID = 25201;
 	private int maxBlueHealth = 0, maxBlueStrength = 0;
 	private int maxRedHealth = 0, maxRedStrength = 0;
 	private boolean blueAvatarDumpAlerted = false, redAvatarDumpAlerted = false;
@@ -120,12 +143,18 @@ public class ZealgainsPlugin extends Plugin
 	private int lastGameBlueScore = 0;
 	private int lastKnownGameSeconds = -1;
 
+	// Lobby size — tracked live from widget 434.6, frozen when lobby timer hits 0
+	private int lobbyPlayerCount = 0;
+	private boolean lobbyCountSet = false;
+	private int prevLobbyTimerSeconds = -1;
+
 	private long lastBanListFetch = 0;
 	private static final long BAN_LIST_COOLDOWN_MS = 5 * 60 * 1000L;
+	private long lastBroadcastReset = 0;
 	// Tracks the local player's Soul Wars team; resets to 0 on any exit (idle-kick, normal end, lobby)
 	private static final int VARBIT_SOUL_WARS_TEAM = 3815;
 
-	private final Pattern callPattern = Pattern.compile("(?i)^\\s*([rb])([rb1-5]+)");
+	private final Pattern callPattern = Pattern.compile("(?i)(?<![a-zA-Z0-9_-])([rb])([rb1-5]+)(?![a-zA-Z0-9_-])");
 	private final Pattern runnerPattern = Pattern.compile("(?i)^(?:[>^]([rb])|([rb])[>^])");
 
 	// Getters for overlay and panel
@@ -135,6 +164,18 @@ public class ZealgainsPlugin extends Plugin
 	public Set<String> getBlueRunners() { return blueRunners; }
 	public int getRedScore() { return lastGameRedScore; }
 	public int getBlueScore() { return lastGameBlueScore; }
+	public boolean isObeliskWarnActive() { return obeliskWarnActive; }
+	public GameObject getTrackedObelisk() { return trackedObelisk; }
+	public int getLobbyPlayerCount() { return lobbyPlayerCount; }
+
+	public boolean hasLocalCall()
+	{
+		String name = client.getLocalPlayer() != null
+				? Text.removeTags(client.getLocalPlayer().getName()) : null;
+		if (name == null) return false;
+		return redKills.containsValue(name) || blueKills.containsValue(name)
+				|| redRunners.contains(name) || blueRunners.contains(name);
+	}
 
 	@Override
 	protected void startUp() throws Exception
@@ -155,6 +196,7 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		overlayManager.add(overlay);
+		overlayManager.add(obeliskOverlay);
 		resetKills();
 
 		lastBanListFetch = System.currentTimeMillis();
@@ -173,6 +215,7 @@ public class ZealgainsPlugin extends Plugin
 		}
 		clientToolbar.removeNavigation(navButton);
 		overlayManager.remove(overlay);
+		overlayManager.remove(obeliskOverlay);
 		resetKills();
 		bannedPlayers.clear();
 		cachedMajorityWorld = -1;
@@ -196,6 +239,85 @@ public class ZealgainsPlugin extends Plugin
 		else if (event.getKey().equals("banListUrl") || event.getKey().equals("enableBanList"))
 		{
 			fetchBanList();
+		}
+		else if (event.getKey().equals("overrideCallFilter") && "true".equals(event.getNewValue()))
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				int result = JOptionPane.showConfirmDialog(null,
+					"<html><b>Override Call Filter</b><br><br>"
+					+ "When enabled, avatar alerts fire for <b>both teams</b> regardless of which team you are on.<br><br>"
+					+ "By default, alerts only fire for your enemy avatar, derived from your own call history.<br><br>"
+					+ "This is a developer option — enable only if you need to monitor both avatars at once.<br><br>"
+					+ "Enable Override Call Filter?</html>",
+					"Developer Option — Override Call Filter",
+					JOptionPane.YES_NO_OPTION,
+					JOptionPane.WARNING_MESSAGE);
+				if (result != JOptionPane.YES_OPTION)
+				{
+					configManager.setConfiguration("zealgains", "overrideCallFilter", false);
+				}
+			});
+		}
+		else if (event.getKey().equals("enableCallsOutsideGame") && "true".equals(event.getNewValue()))
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				int result = JOptionPane.showConfirmDialog(null,
+					"<html><b>Enable Calls Outside Game</b><br><br>"
+					+ "When enabled, the plugin tracks FC calls even when you are <b>not inside a Soul Wars game</b>.<br><br>"
+					+ "Time-based rules (12:00 call cap, B5 gate) will treat the timer as <b>0:00</b> while outside a game, "
+					+ "meaning all slots including B5 are available and the 3-call cap is lifted.<br><br>"
+					+ "This is a developer/testing option — disable it before playing a real game.<br><br>"
+					+ "Enable Calls Outside Game?</html>",
+					"Developer Option — Enable Calls Outside Game",
+					JOptionPane.YES_NO_OPTION,
+					JOptionPane.WARNING_MESSAGE);
+				if (result != JOptionPane.YES_OPTION)
+				{
+					configManager.setConfiguration("zealgains", "enableCallsOutsideGame", false);
+				}
+			});
+		}
+		else if (event.getKey().equals("skipFragmentCheck") && "true".equals(event.getNewValue()))
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				int result = JOptionPane.showConfirmDialog(null,
+					"<html><b>Skip Fragment Count Check</b><br><br>"
+					+ "By default, dump notifications are suppressed when you have <b>fewer than 16 Soul Fragments</b> in your inventory — "
+					+ "the minimum needed for a dump.<br><br>"
+					+ "When enabled, dump notifications will fire <b>regardless of how many fragments you have</b>.<br><br>"
+					+ "This is a developer/testing option — disable it for normal play.<br><br>"
+					+ "Enable Skip Fragment Count Check?</html>",
+					"Developer Option — Skip Fragment Count Check",
+					JOptionPane.YES_NO_OPTION,
+					JOptionPane.WARNING_MESSAGE);
+				if (result != JOptionPane.YES_OPTION)
+				{
+					configManager.setConfiguration("zealgains", "skipFragmentCheck", false);
+				}
+			});
+		}
+		else if (event.getKey().equals("alwaysShowDumpOverlay") && "true".equals(event.getNewValue()))
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				int result = JOptionPane.showConfirmDialog(null,
+					"<html><b>Always Show Dump Overlay</b><br><br>"
+					+ "By default the <b>DO NOT DUMP</b> obelisk overlay is hidden unless you have an active kill call, "
+					+ "so runners and spectators do not see it.<br><br>"
+					+ "When enabled, the overlay will show <b>regardless of whether you have a call</b>.<br><br>"
+					+ "This is a developer/testing option — disable it for normal play.<br><br>"
+					+ "Enable Always Show Dump Overlay?</html>",
+					"Developer Option — Always Show Dump Overlay",
+					JOptionPane.YES_NO_OPTION,
+					JOptionPane.WARNING_MESSAGE);
+				if (result != JOptionPane.YES_OPTION)
+				{
+					configManager.setConfiguration("zealgains", "alwaysShowDumpOverlay", false);
+				}
+			});
 		}
 	}
 
@@ -259,6 +381,56 @@ public class ZealgainsPlugin extends Plugin
 	{
 		int seconds = getGameTimeRemaining();
 
+		// Lobby detection via widget 434.0 — independent of the game timer
+		Widget lobbyRootW = client.getWidget(434, 0);
+		boolean inLobby = lobbyRootW != null && !lobbyRootW.isHidden();
+
+		if (inLobby)
+		{
+			// Track peak player count live from the lobby counter widget
+			Widget countW = client.getWidget(434, 6);
+			if (countW != null && !countW.isHidden() && countW.getText() != null)
+			{
+				String text = countW.getText().trim();
+				int slash = text.indexOf('/');
+				String numStr = slash >= 0 ? text.substring(0, slash).trim() : text;
+				try
+				{
+					int parsed = Integer.parseInt(numStr);
+					if (parsed > lobbyPlayerCount) lobbyPlayerCount = parsed;
+				}
+				catch (NumberFormatException ignored) {}
+			}
+
+			// Watch the lobby countdown (434.7): freeze count when it hits 0, detect left-behind via reset
+			Widget timerW = client.getWidget(434, 7);
+			if (timerW != null && !timerW.isHidden() && timerW.getText() != null)
+			{
+				int timerSecs = parseLobbyTimer(timerW.getText().trim());
+				if (timerSecs >= 0)
+				{
+					if (!lobbyCountSet && timerSecs == 0)
+					{
+						// Timer hit 0 — game is starting, freeze the peak count
+						lobbyCountSet = true;
+					}
+					else if (lobbyCountSet && prevLobbyTimerSeconds >= 0 && timerSecs > prevLobbyTimerSeconds + 15)
+					{
+						// Timer jumped up — we were left behind, a new game is forming; reset for next cycle
+						lobbyPlayerCount = 0;
+						lobbyCountSet = false;
+					}
+					prevLobbyTimerSeconds = timerSecs;
+				}
+			}
+		}
+		else
+		{
+			prevLobbyTimerSeconds = -1;
+			// Fallback: if we entered the game without the timer hitting exactly 0, freeze whatever we have
+			if (!lobbyCountSet && lobbyPlayerCount > 0) lobbyCountSet = true;
+		}
+
 		if (seconds == -1) return;
 
 		// Capture live game state so the end-of-game summary has accurate final values
@@ -271,6 +443,11 @@ public class ZealgainsPlugin extends Plugin
 		if (panel != null)
 			panel.updateGameStatus(config.showGameStatus() ? seconds : -1, lastGameRedScore, lastGameBlueScore);
 
+		if (trackedObelisk == null)
+		{
+			scanForObelisk();
+		}
+
 		checkAvatarDump();
 	}
 
@@ -280,11 +457,82 @@ public class ZealgainsPlugin extends Plugin
 	public void onVarbitChanged(VarbitChanged event)
 	{
 		if (event.getVarbitId() != VARBIT_SOUL_WARS_TEAM) return;
-		if (event.getValue() != 0) return;
-		if (config.autoClear())
+		switch (event.getValue())
 		{
-			if (config.showGameSummary()) printGameSummary();
-			resetKills();
+			case 1: varbitTeam = "b"; break; // assigned to blue team
+			case 2: varbitTeam = "r"; break; // assigned to red team
+			default:
+				varbitTeam = null;
+				if (config.autoClear())
+				{
+					if (config.showGameSummary()) printGameSummary();
+					resetKills();
+				}
+				break;
+		}
+	}
+
+	// --- OBELISK TRACKING ---
+
+	private void scanForObelisk()
+	{
+		Scene scene = client.getScene();
+		Tile[][][] tiles = scene.getTiles();
+		int plane = client.getPlane();
+		for (Tile[] row : tiles[plane])
+		{
+			for (Tile tile : row)
+			{
+				if (tile == null) continue;
+				for (GameObject obj : tile.getGameObjects())
+				{
+					if (obj == null) continue;
+					int id = obj.getId();
+					if (id == OBELISK_ID_NONE || id == OBELISK_ID_BLUE || id == OBELISK_ID_RED)
+					{
+						trackedObelisk = obj;
+						return;
+					}
+				}
+			}
+		}
+	}
+
+	@Subscribe
+	public void onGameObjectSpawned(GameObjectSpawned event)
+	{
+		int id = event.getGameObject().getId();
+		if (id == OBELISK_ID_NONE || id == OBELISK_ID_BLUE || id == OBELISK_ID_RED)
+		{
+			trackedObelisk = event.getGameObject();
+		}
+	}
+
+	@Subscribe
+	public void onGameObjectDespawned(GameObjectDespawned event)
+	{
+		if (event.getGameObject() == trackedObelisk)
+		{
+			trackedObelisk = null;
+		}
+	}
+
+	@Subscribe
+	public void onMenuEntryAdded(MenuEntryAdded event)
+	{
+		if (!config.preventOffColorDumps() || !obeliskWarnActive) return;
+
+		String option = event.getOption().toLowerCase();
+		if (!option.contains("sacrifice")) return;
+
+		// Match by object ID, or fall back to target name if the ID isn't exposed
+		int id = event.getIdentifier();
+		boolean isObelisk = (id == OBELISK_ID_NONE || id == OBELISK_ID_BLUE || id == OBELISK_ID_RED)
+				|| Text.removeTags(event.getTarget()).toLowerCase().contains("obelisk");
+
+		if (isObelisk)
+		{
+			event.getMenuEntry().setDeprioritized(true);
 		}
 	}
 
@@ -312,12 +560,53 @@ public class ZealgainsPlugin extends Plugin
 
 		if (event.getType() != ChatMessageType.FRIENDSCHAT) return;
 
-		// Only track calls while inside a Soul Wars game
+		// Only track calls while inside a Soul Wars game (bypassed in dev mode)
 		int secondsRemaining = getGameTimeRemaining();
-		if (secondsRemaining == -1) return;
+		if (secondsRemaining == -1)
+		{
+			if (!config.enableCallsOutsideGame()) return;
+			secondsRemaining = 0;
+		}
 
 		String sender = Text.removeTags(event.getName());
-		String compressedMessage = message.replaceAll("\\s+", "");
+
+		// Rank broadcast reset — Captain+ only, 15-second cooldown
+		if (message.trim().startsWith("!zgreset"))
+		{
+			FriendsChatManager fcm = client.getFriendsChatManager();
+			if (fcm != null)
+			{
+				FriendsChatRank senderRank = FriendsChatRank.UNRANKED;
+				for (FriendsChatMember member : fcm.getMembers())
+				{
+					if (Text.standardize(member.getName()).equals(Text.standardize(sender)))
+					{
+						senderRank = member.getRank();
+						break;
+					}
+				}
+				if (senderRank.getValue() >= FriendsChatRank.CAPTAIN.getValue())
+				{
+					long now = System.currentTimeMillis();
+					if (now - lastBroadcastReset >= 15_000)
+					{
+						lastBroadcastReset = now;
+						String argsStr = message.trim().substring("!zgreset".length()).trim();
+						if (!argsStr.isEmpty())
+						{
+							String[] broadcastArgs = argsStr.split("\\s+");
+							String result = applyTargetedReset(broadcastArgs);
+							if (result != null)
+							{
+								client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+									"<col=" + colorToHex(config.alertCallColor()) + ">Zealgains: " + sender + " reset " + result + "</col>", null);
+							}
+						}
+					}
+				}
+			}
+			return;
+		}
 
 		// Runner callouts — decode <gt>/<lt> before tag-stripping so > survives
 		String runnerMsg = Text.removeTags(event.getMessage().replace("<gt>", ">").replace("<lt>", "<"))
@@ -333,13 +622,23 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		// Noise filter
-		if (message.contains("?") || message.contains("need") || message.contains("open") || message.contains("who"))
+		if (message.contains("?") || message.contains("need") || message.contains("open") || message.contains("who") || message.contains("call") || message.contains("want") || message.contains("you") || message.contains("getting") || message.contains("go get") || message.contains("grab") || message.contains("grabbing"))
 		{
 			return;
 		}
 
-		Matcher matcher = callPattern.matcher(compressedMessage);
-		if (!matcher.find()) return;
+		// Collect every call-slot mention from anywhere in the message
+		Matcher matcher = callPattern.matcher(message);
+		String callTeam = null;
+		StringBuilder callSlots = new StringBuilder();
+		while (matcher.find())
+		{
+			String t = matcher.group(1).toLowerCase();
+			if (callTeam == null) callTeam = t;
+			else if (!callTeam.equals(t)) return; // mixed teams in one message — reject
+			callSlots.append(matcher.group(2));
+		}
+		if (callTeam == null) return;
 
 		// Majority world check (uses cached value updated by FC member events)
 		if (cachedMajorityWorld != -1 && client.getWorld() != cachedMajorityWorld) return;
@@ -366,9 +665,8 @@ public class ZealgainsPlugin extends Plugin
 			}
 		}
 
-		String team = matcher.group(1).toLowerCase();
-		String kills = matcher.group(2).replaceAll("[^1-5]", "");
-		processCall(team, kills, sender, secondsRemaining);
+		String kills = callSlots.toString().replaceAll("[^1-5]", "");
+		processCall(callTeam, kills, sender, secondsRemaining);
 	}
 
 	// --- COMMANDS ---
@@ -402,45 +700,41 @@ public class ZealgainsPlugin extends Plugin
 				return;
 			}
 
-			java.util.regex.Pattern resetPattern = java.util.regex.Pattern.compile("(?i)^([rb])([1-5]+)$");
-			StringBuilder summary = new StringBuilder();
-			Set<String> affectedTeams = new LinkedHashSet<>();
-			for (String arg : args)
-			{
-				java.util.regex.Matcher m = resetPattern.matcher(arg.trim());
-				if (!m.matches()) continue;
-
-				String team = m.group(1).toLowerCase();
-				Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
-
-				for (char c : m.group(2).toCharArray())
-				{
-					int killNum = Character.getNumericValue(c);
-					if (targetMap.remove(killNum) != null)
-					{
-						if (killNum == 5) kill5Tick = -1;
-						summary.append(team.toUpperCase()).append(killNum).append(" ");
-						affectedTeams.add(team);
-					}
-				}
-			}
-
-			String result = summary.toString().trim();
-			if (result.isEmpty())
+			String result = applyTargetedReset(args);
+			if (result == null)
 			{
 				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: No matching calls found to reset.", null);
 			}
 			else
 			{
-				StringBuilder reshuffleMsg = new StringBuilder();
-				for (String t : affectedTeams)
-					reshuffleTeam(t, reshuffleMsg);
-
-				if (panel != null) panel.updateKills(redKills, blueKills);
-				String msg = "Zealgains: Reset " + result;
-				if (reshuffleMsg.length() > 0) msg += "— " + reshuffleMsg;
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", msg, null);
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "Zealgains: Reset " + result, null);
 			}
+		}
+		else if (event.getCommand().equalsIgnoreCase("zgteam"))
+		{
+			int varbit = client.getVarbitValue(VARBIT_SOUL_WARS_TEAM);
+			String varbitLabel = varbit == 1 ? "blue (1)" : varbit == 2 ? "red (2)" : "none (0)";
+
+			String localName = client.getLocalPlayer() != null
+					? Text.removeTags(client.getLocalPlayer().getName()) : null;
+			String callTeam = localName != null ? getSenderTeam(localName) : null;
+
+			String resolved = getLocalTeam();
+
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"<col=ffff00>Zealgains Team Debug:</col>", null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Varbit 3815: " + varbitLabel, null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Cached varbitTeam: " + (varbitTeam != null ? varbitTeam : "null"), null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Call-history team: " + (callTeam != null ? callTeam : "null"), null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Resolved team: " + (resolved != null ? resolved : "null (alerts suppressed)"), null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  obeliskWarnActive: " + obeliskWarnActive, null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  trackedObelisk: " + (trackedObelisk != null ? "found" : "null"), null);
 		}
 		else if (event.getCommand().equalsIgnoreCase("zgsync"))
 		{
@@ -476,7 +770,6 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
-		Map<String, Set<Integer>> pendingMap = team.equals("r") ? pendingRedCalls : pendingBlueCalls;
 		boolean overCallAlertTriggered = false;
 
 		for (char c : kills.toCharArray())
@@ -485,12 +778,10 @@ public class ZealgainsPlugin extends Plugin
 
 			if (killNumber == 5 && !validateKill5(team, sender, secondsRemaining)) continue;
 
-			// Sequential check: kill N requires kill N-1 to be claimed first
+			// Sequential check: kill N requires kill N-1 to be claimed first — reject out-of-order calls
 			if (killNumber > 1 && !targetMap.containsKey(killNumber - 1))
 			{
-				// Hold it as pending — if they correct their order later, it auto-resolves
-				if (!targetMap.containsKey(killNumber))
-					pendingMap.computeIfAbsent(sender, k -> new LinkedHashSet<>()).add(killNumber);
+				sendAlert(sender + " called " + team.toUpperCase() + killNumber + " out of order — " + team.toUpperCase() + (killNumber - 1) + " must be claimed first.");
 				continue;
 			}
 
@@ -508,9 +799,7 @@ public class ZealgainsPlugin extends Plugin
 			String existing = targetMap.putIfAbsent(killNumber, sender);
 			if (existing == null)
 			{
-				// Successfully claimed — flush any pending slots this player held for this team
 				if (killNumber == 5) kill5Tick = client.getTickCount();
-				resolvePendingCalls(team, sender, secondsRemaining);
 			}
 			else
 			{
@@ -625,14 +914,15 @@ public class ZealgainsPlugin extends Plugin
 		redRunners.clear();
 		blueRunners.clear();
 		disconnectAlerted.clear();
-		pendingRedCalls.clear();
-		pendingBlueCalls.clear();
+
 		kill5Tick = -1;
 		maxBlueHealth = 0; maxBlueStrength = 0;
 		maxRedHealth = 0; maxRedStrength = 0;
 		blueAvatarDumpAlerted = false; redAvatarDumpAlerted = false;
 		blueEarlyDumpWarned = false; redEarlyDumpWarned = false;
+		trackedObelisk = null; obeliskWarnActive = false;
 		lastGameRedScore = 0; lastGameBlueScore = 0; lastKnownGameSeconds = -1;
+		lobbyPlayerCount = 0; lobbyCountSet = false; prevLobbyTimerSeconds = -1;
 
 		if (panel != null)
 		{
@@ -659,6 +949,38 @@ public class ZealgainsPlugin extends Plugin
 				.max(Map.Entry.comparingByValue())
 				.map(Map.Entry::getKey)
 				.orElse(-1);
+	}
+
+	// Applies a targeted reset for the given args (e.g. ["r34", "b2"]).
+	// Returns a formatted result string like "R3 R4 — B1 moved to B3" or null if nothing matched.
+	private String applyTargetedReset(String[] args)
+	{
+		java.util.regex.Pattern resetPattern = java.util.regex.Pattern.compile("(?i)^([rb])([1-5]+)$");
+		StringBuilder summary = new StringBuilder();
+		Set<String> affectedTeams = new LinkedHashSet<>();
+		for (String arg : args)
+		{
+			java.util.regex.Matcher m = resetPattern.matcher(arg.trim());
+			if (!m.matches()) continue;
+			String team = m.group(1).toLowerCase();
+			Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
+			for (char c : m.group(2).toCharArray())
+			{
+				int killNum = Character.getNumericValue(c);
+				if (targetMap.remove(killNum) != null)
+				{
+					if (killNum == 5) kill5Tick = -1;
+					summary.append(team.toUpperCase()).append(killNum).append(" ");
+					affectedTeams.add(team);
+				}
+			}
+		}
+		String result = summary.toString().trim();
+		if (result.isEmpty()) return null;
+		StringBuilder reshuffleMsg = new StringBuilder();
+		for (String t : affectedTeams) reshuffleTeam(t, reshuffleMsg);
+		if (panel != null) panel.updateKills(redKills, blueKills);
+		return reshuffleMsg.length() > 0 ? result + " — " + reshuffleMsg : result;
 	}
 
 	private void sendAlert(String message)
@@ -700,25 +1022,54 @@ public class ZealgainsPlugin extends Plugin
 
 		if (maxBlueHealth == 0 || maxBlueStrength == 0 || maxRedHealth == 0 || maxRedStrength == 0) return;
 
+		// Derive local team — varbit 3815 is authoritative; falls back to call history
+		String localTeam = getLocalTeam();
+
 		// Determine which avatar alerts to show based on team filter
 		boolean showBlueAlert, showRedAlert;
-		if (config.overrideCallFilter())
+		if (config.overrideCallFilter() || config.dumpAlertMode() == ZealgainsConfig.DumpAlertMode.ALL)
 		{
 			showBlueAlert = true;
 			showRedAlert  = true;
 		}
 		else
 		{
-			// Derive team from local player's own calls; unknown = suppress all until a call is made
-			String localName = client.getLocalPlayer() != null ? Text.removeTags(client.getLocalPlayer().getName()) : null;
-			String localTeam = localName != null ? getSenderTeam(localName) : null;
+			// AUTO — unknown team = suppress all until a call is made
 			showBlueAlert = "r".equals(localTeam);
 			showRedAlert  = "b".equals(localTeam);
 		}
 
+		// Obelisk warning — true when dumping here would be wasted or harmful
+		// White obelisk: never safe regardless of team
+		boolean obeliskIsUncaptured = trackedObelisk != null && trackedObelisk.getId() == OBELISK_ID_NONE;
+		// Opposite-color obelisk: red player on blue obelisk, or blue player on red obelisk
+		boolean obeliskIsWrongColor = trackedObelisk != null && localTeam != null
+				&& (("r".equals(localTeam) && trackedObelisk.getId() == OBELISK_ID_BLUE)
+				||  ("b".equals(localTeam) && trackedObelisk.getId() == OBELISK_ID_RED));
+
+		if (obeliskIsUncaptured || obeliskIsWrongColor)
+		{
+			obeliskWarnActive = true;
+		}
+		else if (localTeam == null)
+		{
+			obeliskWarnActive = false;
+		}
+		else if ("r".equals(localTeam))
+		{
+			obeliskWarnActive = !(blueHealth >= maxBlueHealth && blueStrength >= maxBlueStrength);
+		}
+		else
+		{
+			obeliskWarnActive = !(redHealth >= maxRedHealth && redStrength >= maxRedStrength);
+		}
+
+		// Fragment gate — suppress alert if local player doesn't have enough to dump
+		boolean hasEnoughFragments = config.skipFragmentCheck() || getFragmentCount() >= 16;
+
 		// Blue avatar at full → Red team should dump
 		boolean blueReady = blueHealth >= maxBlueHealth && blueStrength >= maxBlueStrength;
-		if (blueReady && !blueAvatarDumpAlerted && showBlueAlert)
+		if (blueReady && !blueAvatarDumpAlerted && showBlueAlert && hasEnoughFragments)
 		{
 			Widget redKillsW = client.getWidget(375, 12);
 			int nextRedKill = (redKillsW != null ? Math.max(0, parseWidgetValue(redKillsW.getText())) : 0) + 1;
@@ -768,7 +1119,7 @@ public class ZealgainsPlugin extends Plugin
 
 		// Red avatar at full → Blue team should dump
 		boolean redReady = redHealth >= maxRedHealth && redStrength >= maxRedStrength;
-		if (redReady && !redAvatarDumpAlerted && showRedAlert)
+		if (redReady && !redAvatarDumpAlerted && showRedAlert && hasEnoughFragments)
 		{
 			Widget blueKillsW = client.getWidget(375, 11);
 			int nextBlueKill = (blueKillsW != null ? Math.max(0, parseWidgetValue(blueKillsW.getText())) : 0) + 1;
@@ -833,6 +1184,34 @@ public class ZealgainsPlugin extends Plugin
 		return String.format("%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
 	}
 
+	// Returns "r", "b", or null. Reads varbit 3815 live (handles plugin load mid-game),
+	// caches result in varbitTeam, then falls back to call history.
+	private String getLocalTeam()
+	{
+		if (varbitTeam == null)
+		{
+			int v = client.getVarbitValue(VARBIT_SOUL_WARS_TEAM);
+			if (v == 1) varbitTeam = "b";
+			else if (v == 2) varbitTeam = "r";
+		}
+		if (varbitTeam != null) return varbitTeam;
+		String localName = client.getLocalPlayer() != null ? Text.removeTags(client.getLocalPlayer().getName()) : null;
+		return localName != null ? getSenderTeam(localName) : null;
+	}
+
+	private int getFragmentCount()
+	{
+		ItemContainer inv = client.getItemContainer(InventoryID.INVENTORY);
+		if (inv == null) return 0;
+		int count = 0;
+		for (Item item : inv.getItems())
+		{
+			if (item != null && item.getId() == SOUL_FRAGMENT_ITEM_ID)
+				count += item.getQuantity();
+		}
+		return count;
+	}
+
 	private boolean isDumpWindowOpen()
 	{
 		FriendsChatManager fcm = client.getFriendsChatManager();
@@ -857,38 +1236,23 @@ public class ZealgainsPlugin extends Plugin
 		catch (NumberFormatException ignored) { return -1; }
 	}
 
-	private void resolvePendingCalls(String team, String sender, int secondsRemaining)
+	// Parses lobby countdown format "M:SS" → total seconds; returns -1 on invalid input
+	private int parseLobbyTimer(String text)
 	{
-		Map<String, Set<Integer>> pendingMap = team.equals("r") ? pendingRedCalls : pendingBlueCalls;
-		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
-		Set<Integer> pending = pendingMap.get(sender);
-		if (pending == null || pending.isEmpty()) return;
-
-		boolean resolved;
-		do
+		if (text == null || text.isEmpty() || text.equals("-")) return -1;
+		String cleaned = Text.removeTags(text).trim();
+		int colon = cleaned.indexOf(':');
+		try
 		{
-			resolved = false;
-			Set<Integer> toRemove = new LinkedHashSet<>();
-			for (int slot : pending)
+			if (colon > 0)
 			{
-				if (targetMap.containsKey(slot)) { toRemove.add(slot); continue; } // taken by someone else
-				if (slot > 1 && !targetMap.containsKey(slot - 1)) continue;        // prereq still missing
-				if (slot == 5 && !validateKill5(team, sender, secondsRemaining)) { toRemove.add(slot); continue; }
-				if (secondsRemaining > 720 && getKillsClaimedBy(sender) >= 3)      { toRemove.add(slot); break; }
-
-				String existing = targetMap.putIfAbsent(slot, sender);
-				toRemove.add(slot);
-				if (existing == null)
-				{
-					if (slot == 5) kill5Tick = client.getTickCount();
-					resolved = true;
-				}
+				int mins = Integer.parseInt(cleaned.substring(0, colon).trim());
+				int secs = Integer.parseInt(cleaned.substring(colon + 1).trim());
+				return mins * 60 + secs;
 			}
-			pending.removeAll(toRemove);
+			return Integer.parseInt(cleaned);
 		}
-		while (resolved && !pending.isEmpty());
-
-		if (panel != null) panel.updateKills(redKills, blueKills);
+		catch (NumberFormatException ignored) { return -1; }
 	}
 
 	private void reshuffleTeam(String team, StringBuilder alertMsg)
