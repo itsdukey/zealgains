@@ -14,16 +14,27 @@ import java.util.Set;
 
 public class ZealgainsPanel extends PluginPanel
 {
+    private final ZealgainsPlugin plugin;
+    private final ZealgainsConfig config;
+
     private final JPanel redContainer = new JPanel();
     private final JPanel blueContainer = new JPanel();
     private final JPanel runnerContainer = new JPanel();
+    private final JPanel runnerWrapper;
     private final JPanel statusPanel = new JPanel();
     private final JLabel timerLabel = new JLabel();
     private final JLabel scoreLabel = new JLabel();
+    private final JLabel playersLabel = new JLabel();
+    private final JLabel redHeader = new JLabel("Red Team");
+    private final JLabel blueHeader = new JLabel("Blue Team");
+    private final JLabel runnerHeader = new JLabel("Runners");
 
-    public ZealgainsPanel(ZealgainsPlugin plugin)
+    public ZealgainsPanel(ZealgainsPlugin plugin, ZealgainsConfig config)
     {
         super(false);
+        this.plugin = plugin;
+        this.config = config;
+
         setLayout(new BorderLayout());
         setBackground(ColorScheme.DARK_GRAY_COLOR);
 
@@ -65,52 +76,62 @@ public class ZealgainsPanel extends PluginPanel
         layoutPanel.add(discordLink);
         layoutPanel.add(Box.createRigidArea(new Dimension(0, 10)));
 
-        // Live timer and score
+        // Timer, score, and player count
         statusPanel.setLayout(new BoxLayout(statusPanel, BoxLayout.Y_AXIS));
         statusPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
         statusPanel.setVisible(false);
 
-        timerLabel.setForeground(Color.YELLOW);
         timerLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        scoreLabel.setForeground(Color.LIGHT_GRAY);
         scoreLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        playersLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         statusPanel.add(timerLabel);
         statusPanel.add(scoreLabel);
+        statusPanel.add(playersLabel);
         layoutPanel.add(statusPanel);
         layoutPanel.add(Box.createRigidArea(new Dimension(0, 10)));
 
         redContainer.setLayout(new BoxLayout(redContainer, BoxLayout.Y_AXIS));
         redContainer.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        layoutPanel.add(createTeamPanel("Red Team", redContainer, Color.RED));
+        layoutPanel.add(createTeamSection(redHeader, redContainer));
         layoutPanel.add(Box.createRigidArea(new Dimension(0, 10)));
 
         blueContainer.setLayout(new BoxLayout(blueContainer, BoxLayout.Y_AXIS));
         blueContainer.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        layoutPanel.add(createTeamPanel("Blue Team", blueContainer, Color.CYAN));
+        layoutPanel.add(createTeamSection(blueHeader, blueContainer));
         layoutPanel.add(Box.createRigidArea(new Dimension(0, 10)));
 
         runnerContainer.setLayout(new BoxLayout(runnerContainer, BoxLayout.Y_AXIS));
         runnerContainer.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        layoutPanel.add(createTeamPanel("Runners", runnerContainer, Color.ORANGE));
+        runnerWrapper = createTeamSection(runnerHeader, runnerContainer);
+        runnerWrapper.setVisible(false);
+        layoutPanel.add(runnerWrapper);
         layoutPanel.add(Box.createRigidArea(new Dimension(0, 15)));
 
         JButton resetButton = new JButton("Reset Calls");
-        resetButton.addActionListener(e -> plugin.resetKills());
+        resetButton.addActionListener(e ->
+        {
+            int result = JOptionPane.showConfirmDialog(
+                this,
+                "Clear all tracked calls and runners?",
+                "Reset Calls",
+                JOptionPane.YES_NO_OPTION
+            );
+            if (result == JOptionPane.YES_OPTION)
+            {
+                plugin.resetKills();
+            }
+        });
         resetButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         layoutPanel.add(resetButton);
 
         add(layoutPanel, BorderLayout.NORTH);
     }
 
-    private JPanel createTeamPanel(String title, JPanel container, Color color)
+    private JPanel createTeamSection(JLabel header, JPanel container)
     {
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.setBackground(ColorScheme.DARK_GRAY_COLOR);
-
-        JLabel header = new JLabel(title);
-        header.setForeground(color);
         header.setBorder(new EmptyBorder(0, 0, 5, 0));
-
         wrapper.add(header, BorderLayout.NORTH);
         wrapper.add(container, BorderLayout.CENTER);
         return wrapper;
@@ -118,24 +139,34 @@ public class ZealgainsPanel extends PluginPanel
 
     public void updateKills(Map<Integer, String> redKills, Map<Integer, String> blueKills)
     {
-        SwingUtilities.invokeLater(() -> {
+        int timeRemaining = plugin.getGameTimeRemaining(); // must be captured on the client thread
+        SwingUtilities.invokeLater(() ->
+        {
+            redHeader.setForeground(config.overlayRedColor());
+            blueHeader.setForeground(config.overlayBlueColor());
+
             redContainer.removeAll();
             blueContainer.removeAll();
 
+            boolean inDumpPhase = (timeRemaining != -1 && timeRemaining <= 720) || config.enableCallsOutsideGame();
+            boolean b5Visible = inDumpPhase && !redKills.containsKey(5);
+
+            // R5 hidden when B5 is claimed
             for (int i = 1; i <= 5; i++)
             {
-                String rName = redKills.getOrDefault(i, "---");
-                JLabel rLabel = new JLabel("Call " + i + ": " + rName);
-                rLabel.setForeground(Color.LIGHT_GRAY);
-                redContainer.add(rLabel);
+                if (i == 5 && blueKills.containsKey(5)) continue;
+                JLabel label = new JLabel("Call " + i + ": " + redKills.getOrDefault(i, "-"));
+                label.setForeground(config.overlayCallNameColor());
+                redContainer.add(label);
+            }
 
-                if (i <= 4 || blueKills.containsKey(5))
-                {
-                    String bName = blueKills.getOrDefault(i, "---");
-                    JLabel bLabel = new JLabel("Call " + i + ": " + bName);
-                    bLabel.setForeground(Color.LIGHT_GRAY);
-                    blueContainer.add(bLabel);
-                }
+            // B5 only visible in dump phase when R5 is unclaimed
+            for (int i = 1; i <= 5; i++)
+            {
+                if (i == 5 && !b5Visible) continue;
+                JLabel label = new JLabel("Call " + i + ": " + blueKills.getOrDefault(i, "-"));
+                label.setForeground(config.overlayCallNameColor());
+                blueContainer.add(label);
             }
 
             revalidate();
@@ -145,17 +176,44 @@ public class ZealgainsPanel extends PluginPanel
 
     public void updateGameStatus(int seconds, int redScore, int blueScore)
     {
-        SwingUtilities.invokeLater(() -> {
-            if (seconds < 0)
-            {
-                statusPanel.setVisible(false);
-            }
-            else
+        int timeRemaining = plugin.getGameTimeRemaining(); // must be captured on the client thread
+        int lobbyCount = plugin.getLobbyPlayerCount();
+        SwingUtilities.invokeLater(() ->
+        {
+            boolean inGame = timeRemaining != -1;
+            boolean showStatus = seconds >= 0;
+
+            timerLabel.setForeground(config.overlayTimerColor());
+            scoreLabel.setForeground(config.overlayScoreColor());
+            playersLabel.setForeground(config.overlayLobbyCountColor());
+
+            timerLabel.setVisible(showStatus && inGame);
+            scoreLabel.setVisible(showStatus && inGame);
+
+            if (showStatus && inGame)
             {
                 timerLabel.setText(String.format("%d:%02d", seconds / 60, seconds % 60));
                 scoreLabel.setText("Red: " + redScore + "  /  Blue: " + blueScore);
-                statusPanel.setVisible(true);
             }
+
+            // Players: ## always shown during game; Lobby: ## opt-in outside game
+            if (inGame && lobbyCount > 0)
+            {
+                playersLabel.setText("Players: " + lobbyCount);
+                playersLabel.setVisible(true);
+            }
+            else if (!inGame && lobbyCount > 0 && config.showLobbyCount())
+            {
+                playersLabel.setText("Lobby: " + lobbyCount);
+                playersLabel.setVisible(true);
+            }
+            else
+            {
+                playersLabel.setVisible(false);
+            }
+
+            statusPanel.setVisible(timerLabel.isVisible() || scoreLabel.isVisible() || playersLabel.isVisible());
+
             revalidate();
             repaint();
         });
@@ -163,29 +221,25 @@ public class ZealgainsPanel extends PluginPanel
 
     public void updateRunners(Set<String> redRunners, Set<String> blueRunners)
     {
-        SwingUtilities.invokeLater(() -> {
+        SwingUtilities.invokeLater(() ->
+        {
+            runnerHeader.setForeground(config.overlayRunnersColor());
             runnerContainer.removeAll();
 
-            if (redRunners.isEmpty() && blueRunners.isEmpty())
+            boolean hasRunners = !redRunners.isEmpty() || !blueRunners.isEmpty();
+            runnerWrapper.setVisible(hasRunners);
+
+            if (!redRunners.isEmpty())
             {
-                JLabel none = new JLabel("None");
-                none.setForeground(Color.LIGHT_GRAY);
-                runnerContainer.add(none);
+                JLabel label = new JLabel("Red: " + String.join(", ", redRunners));
+                label.setForeground(config.overlayRedColor());
+                runnerContainer.add(label);
             }
-            else
+            if (!blueRunners.isEmpty())
             {
-                if (!redRunners.isEmpty())
-                {
-                    JLabel label = new JLabel("Red: " + String.join(", ", redRunners));
-                    label.setForeground(Color.RED);
-                    runnerContainer.add(label);
-                }
-                if (!blueRunners.isEmpty())
-                {
-                    JLabel label = new JLabel("Blue: " + String.join(", ", blueRunners));
-                    label.setForeground(Color.CYAN);
-                    runnerContainer.add(label);
-                }
+                JLabel label = new JLabel("Blue: " + String.join(", ", blueRunners));
+                label.setForeground(config.overlayBlueColor());
+                runnerContainer.add(label);
             }
 
             revalidate();

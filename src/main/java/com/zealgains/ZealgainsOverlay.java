@@ -83,6 +83,15 @@ public class ZealgainsOverlay extends OverlayPanel
             }
         }
 
+        // Fragment count — only shown during a game when the dump fragment gate is relevant
+        if (config.showFragCount() && timeRemaining != -1)
+        {
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Frags: " + plugin.getFragCount())
+                    .leftColor(tint(config.overlayLobbyCountColor()))
+                    .build());
+        }
+
         Map<Integer, String> rKills = plugin.getRedKills();
         Map<Integer, String> bKills = plugin.getBlueKills();
 
