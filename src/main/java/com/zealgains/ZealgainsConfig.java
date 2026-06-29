@@ -27,6 +27,12 @@ public interface ZealgainsConfig extends Config
 		ALL
 	}
 
+	enum DumpOverlayFilter
+	{
+		ALWAYS,
+		SMART_FILTER
+	}
+
 	// ─────────────────────────────────────────────
 	// TOP-LEVEL NOTICE (no section — appears above all sections)
 	// ─────────────────────────────────────────────
@@ -34,8 +40,10 @@ public interface ZealgainsConfig extends Config
 	@ConfigItem(
 			keyName = "topNotice",
 			name = "<html><body width='170'>"
-					+ "<font color='#FFA500'><b>Before configuring, please read:</b><br>"
-					+ "Rules Guide · General Settings Guide · Overlay Usage</font>"
+					+ "<font color='#FFA500'><b>⚠ Read first:</b><br>"
+					+ "• Rules Guide<br>"
+					+ "• Settings Guide<br>"
+					+ "• Overlay</font>"
 					+ "</body></html>",
 			description = "",
 			position = 0
@@ -52,7 +60,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "General Settings",
 			description = "Display and in-game alert options",
-			position = 2
+			position = 4
 	)
 	String generalSection = "generalSection";
 
@@ -136,7 +144,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "General Settings Guide",
 			description = "Commands, overlay behaviour, and alert reference",
-			position = 4,
+			position = 3,
 			closedByDefault = true
 	)
 	String generalGuideSection = "generalGuideSection";
@@ -180,7 +188,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "Overlay Usage",
 			description = "How to read the on-screen call tracker overlay",
-			position = 5,
+			position = 2,
 			closedByDefault = true
 	)
 	String overlayGuideSection = "overlayGuideSection";
@@ -529,7 +537,7 @@ public interface ZealgainsConfig extends Config
 					+ "r2 (before r1 is claimed)<br>"
 					+ "b2 (before b1 is claimed)<br>"
 					+ "r1 b2 (mixed teams in one message)<br>"
-					+ "Messages containing: need, open, who, call, want, you, getting, go get, grab — are always ignored regardless of content."
+					+ "Messages containing: ?, need, open, who, call, want, you, getting, go get, grab — are always ignored regardless of content."
 					+ "</font><br><br>"
 					+ "<font color='#87CEEB'><b>── Frag Runners ──</b></font><br>"
 					+ "<font color='#A0A0A0'>"
@@ -568,7 +576,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "Color Options",
 			description = "Customize colors for alerts, overlays, and summaries — all support opacity",
-			position = 3,
+			position = 5,
 			closedByDefault = true
 	)
 	String alertColorsSection = "alertColorsSection";
@@ -736,8 +744,8 @@ public interface ZealgainsConfig extends Config
 	@Alpha
 	@ConfigItem(
 			keyName = "overlayLobbyCountColor",
-			name = "Overlay Lobby Count",
-			description = "Color of the FC member count line in the overlay",
+			name = "Overlay Players Count",
+			description = "Color of the 'Players: ##' line shown during a game and the 'Lobby: ##' line shown in the lobby (Developer Options)",
 			position = 12,
 			section = alertColorsSection
 	)
@@ -881,7 +889,22 @@ public interface ZealgainsConfig extends Config
 	)
 	default boolean preventOffColorDumps()
 	{
-		return false;
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "dumpOverlayFilter",
+			name = "Dump Warning Visibility",
+			description = "<html><b>Always</b> (default) — the DO NOT DUMP overlay and dump prevention apply to everyone in the game, "
+					+ "including spectators and players with no calls.<br><br>"
+					+ "<b>Smart Filter</b> — only active when you have a kill call or are a registered runner. "
+					+ "Spectators and players with no calls will not see the warning or have their Sacrifice deprioritized.</html>",
+			position = 9,
+			section = generalSection
+	)
+	default DumpOverlayFilter dumpOverlayFilter()
+	{
+		return DumpOverlayFilter.ALWAYS;
 	}
 
 	@ConfigItem(

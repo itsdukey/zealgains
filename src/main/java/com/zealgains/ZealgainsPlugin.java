@@ -9,6 +9,7 @@ import net.runelite.api.FriendsChatManager;
 import net.runelite.api.FriendsChatMember;
 import net.runelite.api.FriendsChatRank;
 import net.runelite.api.GameObject;
+import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
@@ -125,6 +126,8 @@ public class ZealgainsPlugin extends Plugin
 	private static final int OBELISK_ID_NONE = 40449;
 	private static final int OBELISK_ID_BLUE = 40450;
 	private static final int OBELISK_ID_RED  = 40451;
+	private static final int CAPE_ID_BLUE    = 25208;
+	private static final int CAPE_ID_RED     = 25207;
 
 	private GameObject trackedObelisk  = null;
 	private boolean obeliskWarnActive  = false;
@@ -137,6 +140,7 @@ public class ZealgainsPlugin extends Plugin
 	private int maxRedHealth = 0, maxRedStrength = 0;
 	private boolean blueAvatarDumpAlerted = false, redAvatarDumpAlerted = false;
 	private boolean blueEarlyDumpWarned = false, redEarlyDumpWarned = false;
+	private boolean kill5PreWarnedEarly = false, kill5PreWarnedLate = false;
 
 	// End-of-game summary tracking
 	private int lastGameRedScore = 0;
@@ -175,6 +179,13 @@ public class ZealgainsPlugin extends Plugin
 		if (name == null) return false;
 		return redKills.containsValue(name) || blueKills.containsValue(name)
 				|| redRunners.contains(name) || blueRunners.contains(name);
+	}
+
+	// Returns true when the local player is actively participating in a Soul Wars game.
+	// Delegates to getLocalTeam() which checks varbit, equipped cape, and call history.
+	public boolean isLocalPlayerInGame()
+	{
+		return getLocalTeam() != null;
 	}
 
 	@Override
@@ -396,8 +407,7 @@ public class ZealgainsPlugin extends Plugin
 				String numStr = slash >= 0 ? text.substring(0, slash).trim() : text;
 				try
 				{
-					int parsed = Integer.parseInt(numStr);
-					if (parsed > lobbyPlayerCount) lobbyPlayerCount = parsed;
+					lobbyPlayerCount = Integer.parseInt(numStr);
 				}
 				catch (NumberFormatException ignored) {}
 			}
@@ -437,8 +447,10 @@ public class ZealgainsPlugin extends Plugin
 		lastKnownGameSeconds = seconds;
 		Widget redScoreW = client.getWidget(375, 12);
 		Widget blueScoreW = client.getWidget(375, 11);
-		if (redScoreW != null) lastGameRedScore = Math.max(0, parseWidgetValue(redScoreW.getText()));
-		if (blueScoreW != null) lastGameBlueScore = Math.max(0, parseWidgetValue(blueScoreW.getText()));
+		if (redScoreW != null && redScoreW.getText() != null)
+			lastGameRedScore  = Math.max(0, parseWidgetValue(redScoreW.getText()));
+		if (blueScoreW != null && blueScoreW.getText() != null)
+			lastGameBlueScore = Math.max(0, parseWidgetValue(blueScoreW.getText()));
 
 		if (panel != null)
 			panel.updateGameStatus(config.showGameStatus() ? seconds : -1, lastGameRedScore, lastGameBlueScore);
@@ -521,6 +533,8 @@ public class ZealgainsPlugin extends Plugin
 	public void onMenuEntryAdded(MenuEntryAdded event)
 	{
 		if (!config.preventOffColorDumps() || !obeliskWarnActive) return;
+		if (config.dumpOverlayFilter() == ZealgainsConfig.DumpOverlayFilter.SMART_FILTER
+				&& !config.alwaysShowDumpOverlay() && !isLocalPlayerInGame()) return;
 
 		String option = event.getOption().toLowerCase();
 		if (!option.contains("sacrifice")) return;
@@ -890,8 +904,8 @@ public class ZealgainsPlugin extends Plugin
 		// Prefer live widget read so the score is accurate even if the interface closes on the same tick as game end
 		Widget redScoreW  = client.getWidget(375, 12);
 		Widget blueScoreW = client.getWidget(375, 11);
-		int redScore  = (redScoreW  != null) ? Math.max(0, parseWidgetValue(redScoreW.getText()))  : lastGameRedScore;
-		int blueScore = (blueScoreW != null) ? Math.max(0, parseWidgetValue(blueScoreW.getText())) : lastGameBlueScore;
+		int redScore  = (redScoreW  != null && redScoreW.getText()  != null) ? Math.max(0, parseWidgetValue(redScoreW.getText()))  : lastGameRedScore;
+		int blueScore = (blueScoreW != null && blueScoreW.getText() != null) ? Math.max(0, parseWidgetValue(blueScoreW.getText())) : lastGameBlueScore;
 
 		String header  = "<col=" + colorToHex(config.summaryHeaderColor()) + ">=== Zealgains: Game Summary ===</col>";
 		String redLine = red.length() > 0   ? "<col=" + colorToHex(config.summaryRedColor())  + ">Red Calls — "  + red.toString().trim()  + "</col>" : null;
@@ -920,6 +934,7 @@ public class ZealgainsPlugin extends Plugin
 		maxRedHealth = 0; maxRedStrength = 0;
 		blueAvatarDumpAlerted = false; redAvatarDumpAlerted = false;
 		blueEarlyDumpWarned = false; redEarlyDumpWarned = false;
+		kill5PreWarnedEarly = false; kill5PreWarnedLate = false;
 		trackedObelisk = null; obeliskWarnActive = false;
 		lastGameRedScore = 0; lastGameBlueScore = 0; lastKnownGameSeconds = -1;
 		lobbyPlayerCount = 0; lobbyCountSet = false; prevLobbyTimerSeconds = -1;
@@ -1020,10 +1035,70 @@ public class ZealgainsPlugin extends Plugin
 		if (redHealth > maxRedHealth)       maxRedHealth    = redHealth;
 		if (redStrength > maxRedStrength)   maxRedStrength  = redStrength;
 
-		if (maxBlueHealth == 0 || maxBlueStrength == 0 || maxRedHealth == 0 || maxRedStrength == 0) return;
-
 		// Derive local team — varbit 3815 is authoritative; falls back to call history
 		String localTeam = getLocalTeam();
+
+		// Obelisk warning — computed every tick regardless of whether all four max values are set.
+		// White obelisk: never safe regardless of team
+		boolean obeliskIsUncaptured = trackedObelisk != null && trackedObelisk.getId() == OBELISK_ID_NONE;
+		// Opposite-color obelisk: red player on blue obelisk, or blue player on red obelisk
+		boolean obeliskIsWrongColor = trackedObelisk != null && localTeam != null
+				&& (("r".equals(localTeam) && trackedObelisk.getId() == OBELISK_ID_BLUE)
+				||  ("b".equals(localTeam) && trackedObelisk.getId() == OBELISK_ID_RED));
+
+		if (obeliskIsUncaptured || obeliskIsWrongColor)
+		{
+			obeliskWarnActive = true;
+		}
+		else if (trackedObelisk == null || localTeam == null)
+		{
+			obeliskWarnActive = false;
+		}
+		else if ("r".equals(localTeam))
+		{
+			boolean blueAvatarReady = maxBlueHealth > 0 && blueHealth >= maxBlueHealth
+					&& maxBlueStrength > 0 && blueStrength >= maxBlueStrength;
+			if (!blueAvatarReady)
+			{
+				obeliskWarnActive = true;
+			}
+			else
+			{
+				// Avatar ready — keep warning if next dump is kill 5 but window not yet open
+				Widget redKillsW = client.getWidget(375, 12);
+				String killText = redKillsW != null ? redKillsW.getText() : null;
+				int redKills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
+				obeliskWarnActive = redKills == 4 && !isDumpWindowOpen();
+			}
+		}
+		else
+		{
+			boolean redAvatarReady = maxRedHealth > 0 && redHealth >= maxRedHealth
+					&& maxRedStrength > 0 && redStrength >= maxRedStrength;
+			if (!redAvatarReady)
+			{
+				obeliskWarnActive = true;
+			}
+			else
+			{
+				// Avatar ready — keep warning if next dump is kill 5 but window not yet open
+				Widget blueKillsW = client.getWidget(375, 11);
+				String killText = blueKillsW != null ? blueKillsW.getText() : null;
+				int blueKills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
+				obeliskWarnActive = blueKills == 4 && !isDumpWindowOpen();
+			}
+		}
+
+		// Players in the game without a specific kill call should never dump, even when the
+		// avatar reaches full HP (which would otherwise clear obeliskWarnActive for the
+		// assigned caller). Keep the warning on for any uncalled participant.
+		if (!obeliskWarnActive && trackedObelisk != null && isLocalPlayerInGame() && !hasLocalCall())
+		{
+			obeliskWarnActive = true;
+		}
+
+		// Avatar dump alerts require all four max values to be established first
+		if (maxBlueHealth == 0 || maxBlueStrength == 0 || maxRedHealth == 0 || maxRedStrength == 0) return;
 
 		// Determine which avatar alerts to show based on team filter
 		boolean showBlueAlert, showRedAlert;
@@ -1039,33 +1114,67 @@ public class ZealgainsPlugin extends Plugin
 			showRedAlert  = "b".equals(localTeam);
 		}
 
-		// Obelisk warning — true when dumping here would be wasted or harmful
-		// White obelisk: never safe regardless of team
-		boolean obeliskIsUncaptured = trackedObelisk != null && trackedObelisk.getId() == OBELISK_ID_NONE;
-		// Opposite-color obelisk: red player on blue obelisk, or blue player on red obelisk
-		boolean obeliskIsWrongColor = trackedObelisk != null && localTeam != null
-				&& (("r".equals(localTeam) && trackedObelisk.getId() == OBELISK_ID_BLUE)
-				||  ("b".equals(localTeam) && trackedObelisk.getId() == OBELISK_ID_RED));
-
-		if (obeliskIsUncaptured || obeliskIsWrongColor)
-		{
-			obeliskWarnActive = true;
-		}
-		else if (localTeam == null)
-		{
-			obeliskWarnActive = false;
-		}
-		else if ("r".equals(localTeam))
-		{
-			obeliskWarnActive = !(blueHealth >= maxBlueHealth && blueStrength >= maxBlueStrength);
-		}
-		else
-		{
-			obeliskWarnActive = !(redHealth >= maxRedHealth && redStrength >= maxRedStrength);
-		}
-
 		// Fragment gate — suppress alert if local player doesn't have enough to dump
 		boolean hasEnoughFragments = config.skipFragmentCheck() || getFragmentCount() >= 16;
+
+		// Kill-5 pre-warning — fires at 5:15 then again at 5:05 when:
+		//   - Timer has crossed the threshold (315 / 305)
+		//   - Dump window is not yet open
+		//   - R5 or B5 has been called (winning team known)
+		//   - Actual kill count for that team is 4 (kill 5 is genuinely next)
+		// No notification. Not gated by avatarAlerts or team filter.
+		// Winning team: "DO NOT DUMP UNTIL X ON TIMER"; everyone else: "DO NOT DUMP"
+		int preWarnTime = getGameTimeRemaining();
+		if (preWarnTime != -1 && !isDumpWindowOpen())
+		{
+			boolean fireEarly = !kill5PreWarnedEarly && preWarnTime <= 315;
+			boolean fireLate  = !kill5PreWarnedLate  && preWarnTime <= 305;
+			if (fireEarly || fireLate)
+			{
+				boolean redHasWin  = redKills.containsKey(5);
+				boolean blueHasWin = blueKills.containsKey(5);
+				if (redHasWin || blueHasWin)
+				{
+					Widget rKW = client.getWidget(375, 12);
+					String rKT = rKW != null ? rKW.getText() : null;
+					int redKillCount  = rKT != null ? Math.max(0, parseWidgetValue(rKT)) : -1;
+
+					Widget bKW = client.getWidget(375, 11);
+					String bKT = bKW != null ? bKW.getText() : null;
+					int blueKillCount = bKT != null ? Math.max(0, parseWidgetValue(bKT)) : -1;
+
+					boolean killCountReady = (redHasWin && redKillCount == 4)
+							|| (blueHasWin && blueKillCount == 4);
+					if (killCountReady)
+					{
+						int pwPlayerCount = lobbyPlayerCount;
+						if (pwPlayerCount < 40)
+						{
+							FriendsChatManager pwFcm = client.getFriendsChatManager();
+							if (pwFcm != null) pwPlayerCount = Math.max(pwPlayerCount, pwFcm.getCount());
+						}
+						String killTimeStr = pwPlayerCount >= 40 ? "4:45" : "5:00";
+
+						boolean localIsWinner = (redHasWin && "r".equals(localTeam))
+								|| (blueHasWin && "b".equals(localTeam));
+						String chatMsg = "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: "
+								+ (localIsWinner ? "DO NOT DUMP UNTIL " + killTimeStr + " ON TIMER" : "DO NOT DUMP")
+								+ "</col>";
+
+						if (fireEarly)
+						{
+							client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", chatMsg, null);
+							kill5PreWarnedEarly = true;
+						}
+						if (fireLate)
+						{
+							client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", chatMsg, null);
+							kill5PreWarnedLate = true;
+						}
+					}
+				}
+			}
+		}
 
 		// Blue avatar at full → Red team should dump
 		boolean blueReady = blueHealth >= maxBlueHealth && blueStrength >= maxBlueStrength;
@@ -1107,8 +1216,8 @@ public class ZealgainsPlugin extends Plugin
 					}
 					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
+					blueAvatarDumpAlerted = true;
 				}
-				blueAvatarDumpAlerted = true;
 			}
 		}
 		else if (!blueReady)
@@ -1157,8 +1266,8 @@ public class ZealgainsPlugin extends Plugin
 					}
 					client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
+					redAvatarDumpAlerted = true;
 				}
-				redAvatarDumpAlerted = true;
 			}
 		}
 		else if (!redReady)
@@ -1184,8 +1293,7 @@ public class ZealgainsPlugin extends Plugin
 		return String.format("%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
 	}
 
-	// Returns "r", "b", or null. Reads varbit 3815 live (handles plugin load mid-game),
-	// caches result in varbitTeam, then falls back to call history.
+	// Returns "r", "b", or null. Priority: varbit 3815 (cached) → equipped cape → call history.
 	private String getLocalTeam()
 	{
 		if (varbitTeam == null)
@@ -1195,6 +1303,20 @@ public class ZealgainsPlugin extends Plugin
 			else if (v == 2) varbitTeam = "r";
 		}
 		if (varbitTeam != null) return varbitTeam;
+
+		// Fallback: detect team from equipped Soul Wars cape (blue 25208 / red 25207).
+		// Useful for players without a call who haven't triggered a varbit update yet.
+		ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
+		if (equipment != null)
+		{
+			Item cape = equipment.getItem(EquipmentInventorySlot.CAPE.getSlotIdx());
+			if (cape != null)
+			{
+				if (cape.getId() == CAPE_ID_BLUE) return "b";
+				if (cape.getId() == CAPE_ID_RED)  return "r";
+			}
+		}
+
 		String localName = client.getLocalPlayer() != null ? Text.removeTags(client.getLocalPlayer().getName()) : null;
 		return localName != null ? getSenderTeam(localName) : null;
 	}
@@ -1214,11 +1336,17 @@ public class ZealgainsPlugin extends Plugin
 
 	private boolean isDumpWindowOpen()
 	{
-		FriendsChatManager fcm = client.getFriendsChatManager();
-		int memberCount = fcm != null ? fcm.getCount() : 0;
-		int threshold = memberCount >= 40 ? 285 : 300;
 		int timeRemaining = getGameTimeRemaining();
-		return timeRemaining != -1 && timeRemaining <= threshold;
+		if (timeRemaining == -1) return false;
+		// lobbyPlayerCount (Players: ## field, frozen at game start) is the most reliable
+		// player count; fall back to live FC member count if the lobby wasn't captured.
+		int playerCount = lobbyPlayerCount;
+		if (playerCount < 40)
+		{
+			FriendsChatManager fcm = client.getFriendsChatManager();
+			if (fcm != null) playerCount = Math.max(playerCount, fcm.getCount());
+		}
+		return timeRemaining <= (playerCount >= 40 ? 285 : 300);
 	}
 
 	private int parseWidgetValue(String text)

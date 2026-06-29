@@ -100,7 +100,8 @@ public class ZealgainsOverlay extends OverlayPanel
         }
 
         // Blue team calls
-        boolean b5Visible = timeRemaining != -1 && timeRemaining <= 720 && !rKills.containsKey(5);
+        boolean inDumpPhase = (timeRemaining != -1 && timeRemaining <= 720) || config.enableCallsOutsideGame();
+        boolean b5Visible = inDumpPhase && !rKills.containsKey(5);
         panelComponent.getChildren().add(LineComponent.builder().left("Blue Team").leftColor(tint(config.overlayBlueColor())).build());
         for (int i = 1; i <= 5; i++)
         {
