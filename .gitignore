@@ -7,3 +7,7 @@ build
 nbactions.xml
 nb-configuration.xml
 nbproject/
+
+.claude/
+CLAUDE.md
+AGENTS.md
