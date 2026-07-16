@@ -13,6 +13,8 @@ import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.Scene;
 import net.runelite.api.Tile;
 import net.runelite.api.events.GameObjectDespawned;
@@ -158,7 +160,16 @@ public class ZealgainsPlugin extends Plugin
 	// Tracks the local player's Soul Wars team; resets to 0 on any exit (idle-kick, normal end, lobby)
 	private static final int VARBIT_SOUL_WARS_TEAM = 3815;
 
-	private final Pattern callPattern = Pattern.compile("(?i)(?<![a-zA-Z0-9_-])([rb])([rb1-5]+)(?![a-zA-Z0-9_-])");
+	// Matches the leading call-shaped prefix of a token — used to walk the leading run of tokens
+	// in a message rather than searching for calls anywhere in the sentence (see onChatMessage).
+	// Group 2 requires every embedded letter (for compact chains like "r1r2r3") to be (a) the
+	// SAME letter as the leading team via the \1 backreference, and (b) immediately followed by
+	// a slot digit. (a) rejects ambiguous team typos like "br1"/"rb2" — a different letter right
+	// after the leading one with no team-confirming context is a typo, not a call for either team.
+	// (b) rejects plain words like "bruv"/"bbq" (no digit follows the second letter at all).
+	// Intentionally not full-token-anchored: garbage glued directly onto the call with no space
+	// (e.g. "b12\", "b12q") still registers, with the glued-on leftover treated as remainder text.
+	private final Pattern callTokenPattern = Pattern.compile("(?i)^([rb])((?:\\1?[1-5])+)");
 	private final Pattern runnerPattern = Pattern.compile("(?i)^(?:[>^]([rb])|([rb])[>^])");
 
 	// Getters for overlay and panel
@@ -254,22 +265,22 @@ public class ZealgainsPlugin extends Plugin
 		{
 			fetchBanList();
 		}
-		else if (event.getKey().equals("overrideCallFilter") && "true".equals(event.getNewValue()))
+		else if (event.getKey().equals("dumpAlertMode") && "ALL".equals(event.getNewValue()))
 		{
 			SwingUtilities.invokeLater(() ->
 			{
 				int result = JOptionPane.showConfirmDialog(null,
-					"<html><b>Override Call Filter</b><br><br>"
-					+ "When enabled, avatar alerts fire for <b>both teams</b> regardless of which team you are on.<br><br>"
-					+ "By default, alerts only fire for your enemy avatar, derived from your own call history.<br><br>"
+					"<html><b>Dump Alert Team Filter — All</b><br><br>"
+					+ "When set to All, avatar alerts fire for <b>both teams</b> regardless of which team you are on.<br><br>"
+					+ "By default (Auto), alerts only fire for your enemy avatar, derived from your own call history.<br><br>"
 					+ "This is a developer option — enable only if you need to monitor both avatars at once.<br><br>"
-					+ "Enable Override Call Filter?</html>",
-					"Developer Option — Override Call Filter",
+					+ "Set Dump Alert Team Filter to All?</html>",
+					"Developer Option — Dump Alert Team Filter",
 					JOptionPane.YES_NO_OPTION,
 					JOptionPane.WARNING_MESSAGE);
 				if (result != JOptionPane.YES_OPTION)
 				{
-					configManager.setConfiguration("zealgains", "overrideCallFilter", false);
+					configManager.setConfiguration("zealgains", "dumpAlertMode", ZealgainsConfig.DumpAlertMode.AUTO);
 				}
 			});
 		}
@@ -544,7 +555,12 @@ public class ZealgainsPlugin extends Plugin
 	@Subscribe
 	public void onMenuEntryAdded(MenuEntryAdded event)
 	{
-		if (!config.preventOffColorDumps() || !obeliskWarnActive) return;
+		handleObeliskSacrificeSwap(event);
+	}
+
+	private void handleObeliskSacrificeSwap(MenuEntryAdded event)
+	{
+		if (!config.enableFragging() || !config.preventOffColorDumps() || !obeliskWarnActive) return;
 		if (config.dumpOverlayFilter() == ZealgainsConfig.DumpOverlayFilter.SMART_FILTER
 				&& !config.alwaysShowDumpOverlay() && !isLocalPlayerInGame()) return;
 
@@ -560,6 +576,57 @@ public class ZealgainsPlugin extends Plugin
 		{
 			event.getMenuEntry().setDeprioritized(true);
 		}
+	}
+
+	// Promotes Add Friend/Delete to left-click, pushing whatever else is there (Kick, Hop-to, etc.) off left-click.
+	// Scoped to the Friends Chat / chat-channel member list only — the standalone Friends List panel uses the
+	// same option text but should keep Message as its left-click default, so it must not be touched.
+	// Runs on ClientTick (after the menu is fully built for the frame) rather than MenuEntryAdded, since that
+	// fires once per entry as the menu is incrementally constructed — too early for the other entries to exist yet.
+	//
+	// Array position alone is not enough: Add Friend/Delete are natively MenuAction.CC_OP_LOW_PRIORITY, and
+	// low-priority entries are right-click only regardless of where they sit in the array. RuneLite's own core
+	// Menu Entry Swapper (MenuEntrySwapperPlugin#swap(Menu, MenuEntry[], int, int)) promotes a low-priority
+	// entry to CC_OP after moving it into the last slot for exactly this reason — we mirror that here.
+	private void reorderFcMemberMenu()
+	{
+		if (!config.leftClickAddRemove()) return;
+
+		MenuEntry[] entries = client.getMenuEntries();
+		int addOrDeleteIndex = -1;
+		for (int i = 0; i < entries.length; i++)
+		{
+			Widget widget = entries[i].getWidget();
+			if (widget == null || widget.getId() != InterfaceID.ChatchannelCurrent.LIST) continue;
+
+			String entryOption = entries[i].getOption().toLowerCase();
+			if (entryOption.contains("delete") || entryOption.contains("friend"))
+			{
+				addOrDeleteIndex = i;
+				break;
+			}
+		}
+		if (addOrDeleteIndex == -1) return;
+
+		int lastIndex = entries.length - 1;
+		MenuEntry addOrDeleteEntry = entries[addOrDeleteIndex];
+
+		if (addOrDeleteIndex != lastIndex)
+		{
+			MenuEntry displaced = entries[lastIndex];
+			entries[addOrDeleteIndex] = displaced;
+			entries[lastIndex] = addOrDeleteEntry;
+		}
+
+		boolean promoted = addOrDeleteEntry.getType() == MenuAction.CC_OP_LOW_PRIORITY;
+		if (promoted)
+		{
+			addOrDeleteEntry.setType(MenuAction.CC_OP);
+		}
+
+		if (addOrDeleteIndex == lastIndex && !promoted) return;
+
+		client.setMenuEntries(entries);
 	}
 
 	// --- CHAT MESSAGE HANDLER ---
@@ -647,24 +714,60 @@ public class ZealgainsPlugin extends Plugin
 			return;
 		}
 
-		// Noise filter
-		if (message.contains("?") || message.contains("need") || message.contains("open") || message.contains("who") || message.contains("call") || message.contains("want") || message.contains("you") || message.contains("getting") || message.contains("go get") || message.contains("grab") || message.contains("grabbing"))
+		// Calls must start the message — walk tokens from the beginning, capturing the leading
+		// run of same-team call tokens (r1, r123, r1r2r3, "r1 r2 r3", etc.) and stopping at the
+		// first token that doesn't start with one. This alone rejects most non-call sentences
+		// structurally (e.g. "who has r1?" doesn't start with a call token) without needing a
+		// keyword filter. A token only has to *start* with a valid call shape, not match it in
+		// full — trailing garbage glued on with no space ("b12\", "b12q") still stops the walk
+		// but the call itself still registers, with the garbage folded into the remainder below.
+		String[] tokens = message.trim().split("\\s+");
+		String callTeam = null;
+		StringBuilder callSlots = new StringBuilder();
+		int consumedTokens = 0;
+		String trailingGarbage = null;
+		for (String token : tokens)
+		{
+			Matcher tokenMatcher = callTokenPattern.matcher(token);
+			if (!tokenMatcher.find()) break;
+			String t = tokenMatcher.group(1).toLowerCase();
+			if (callTeam == null) callTeam = t;
+			else if (!callTeam.equals(t)) return; // mixed teams in the leading run — reject
+			// group(2) can still contain embedded r/b letters from chains like "r1r2r3" — strip
+			// down to digits only before this reaches processCall's char -> slot-number conversion.
+			callSlots.append(tokenMatcher.group(2).replaceAll("[^1-5]", ""));
+			consumedTokens++;
+			if (tokenMatcher.end() < token.length())
+			{
+				// Garbage glued directly onto the call with no space (e.g. accidentally hitting
+				// backslash/quote before Enter) — keep the call, treat the leftover as remainder
+				// text subject to the same blocklist as everything else, and stop the call walk.
+				trailingGarbage = token.substring(tokenMatcher.end());
+				break;
+			}
+		}
+		if (callTeam == null) return; // message doesn't start with a valid call
+
+		// More than one character glued directly onto the call (no space) reads as real text —
+		// a username or a word — rather than a fat-fingered keystroke. "b12\" and "b12q" (one
+		// stray character) still register; "b12ss" or "b34coolname" (two or more) are rejected
+		// outright rather than falling through to the remainder blocklist below.
+		if (trailingGarbage != null && trailingGarbage.length() > 1) return;
+
+		// Anything left over after the leading call must not contain a disqualifying word —
+		// e.g. "r1 taken by someone else" describes state rather than claiming the slot.
+		StringBuilder remainderBuilder = new StringBuilder();
+		if (trailingGarbage != null) remainderBuilder.append(trailingGarbage);
+		for (int i = consumedTokens; i < tokens.length; i++)
+		{
+			if (remainderBuilder.length() > 0) remainderBuilder.append(' ');
+			remainderBuilder.append(tokens[i]);
+		}
+		String remainder = remainderBuilder.toString();
+		if (remainder.contains("?") || remainder.contains("need") || remainder.contains("open") || remainder.contains("who") || remainder.contains("call") || remainder.contains("want") || remainder.contains("you") || remainder.contains("getting") || remainder.contains("go get") || remainder.contains("grab") || remainder.contains("grabbing") || remainder.contains("available") || remainder.contains("anyone got") || remainder.contains("free") || remainder.contains("someone") || remainder.contains("anybody") || remainder.contains("is there") || remainder.contains("can i") || remainder.contains("taken") || remainder.contains("unclaimed") || remainder.contains("uncalled") || remainder.contains("please") || remainder.contains("pls") || remainder.contains("plz") || remainder.contains("wasn't") || remainder.contains("was not"))
 		{
 			return;
 		}
-
-		// Collect every call-slot mention from anywhere in the message
-		Matcher matcher = callPattern.matcher(message);
-		String callTeam = null;
-		StringBuilder callSlots = new StringBuilder();
-		while (matcher.find())
-		{
-			String t = matcher.group(1).toLowerCase();
-			if (callTeam == null) callTeam = t;
-			else if (!callTeam.equals(t)) return; // mixed teams in one message — reject
-			callSlots.append(matcher.group(2));
-		}
-		if (callTeam == null) return;
 
 		// Majority world check (uses cached value updated by FC member events)
 		if (cachedMajorityWorld != -1 && client.getWorld() != cachedMajorityWorld) return;
@@ -759,8 +862,46 @@ public class ZealgainsPlugin extends Plugin
 					"  Resolved team: " + (resolved != null ? resolved : "null (alerts suppressed)"), null);
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
 					"  obeliskWarnActive: " + obeliskWarnActive, null);
+
+			String obeliskColor = trackedObelisk == null ? "null"
+					: trackedObelisk.getId() == OBELISK_ID_NONE ? "white/uncaptured"
+					: trackedObelisk.getId() == OBELISK_ID_BLUE ? "blue"
+					: trackedObelisk.getId() == OBELISK_ID_RED ? "red"
+					: "unknown (" + trackedObelisk.getId() + ")";
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-					"  trackedObelisk: " + (trackedObelisk != null ? "found" : "null"), null);
+					"  trackedObelisk: " + obeliskColor, null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  hasLocalCall: " + hasLocalCall(), null);
+
+			Widget blueHealthW   = client.getWidget(375, 15);
+			Widget blueStrengthW = client.getWidget(375, 19);
+			Widget redHealthW    = client.getWidget(375, 16);
+			Widget redStrengthW  = client.getWidget(375, 20);
+			int blueHealth   = blueHealthW != null ? parseWidgetValue(blueHealthW.getText()) : -1;
+			int blueStrength = blueStrengthW != null ? parseWidgetValue(blueStrengthW.getText()) : -1;
+			int redHealth    = redHealthW != null ? parseWidgetValue(redHealthW.getText()) : -1;
+			int redStrength  = redStrengthW != null ? parseWidgetValue(redStrengthW.getText()) : -1;
+			boolean blueAvatarReady = isAvatarReady(blueHealth, maxBlueHealth, blueStrength, maxBlueStrength);
+			boolean redAvatarReady = isAvatarReady(redHealth, maxRedHealth, redStrength, maxRedStrength);
+
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Blue avatar: HP " + blueHealth + "/" + maxBlueHealth
+							+ ", Str " + blueStrength + "/" + maxBlueStrength
+							+ ", ready=" + blueAvatarReady, null);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Red avatar: HP " + redHealth + "/" + maxRedHealth
+							+ ", Str " + redStrength + "/" + maxRedStrength
+							+ ", ready=" + redAvatarReady, null);
+
+			Widget redKillsW  = client.getWidget(375, 12);
+			Widget blueKillsW = client.getWidget(375, 11);
+			String redKillsText  = redKillsW != null ? redKillsW.getText() : null;
+			String blueKillsText = blueKillsW != null ? blueKillsW.getText() : null;
+			// Clamped with Math.max(0, ...) to match how checkAvatarDump() treats these same widgets.
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Red kills banked: " + (redKillsText != null ? Math.max(0, parseWidgetValue(redKillsText)) : "?")
+							+ ", Blue kills banked: " + (blueKillsText != null ? Math.max(0, parseWidgetValue(blueKillsText)) : "?")
+							+ ", dumpWindowOpen=" + isDumpWindowOpen(), null);
 		}
 		else if (event.getCommand().equalsIgnoreCase("zgsync"))
 		{
@@ -798,9 +939,18 @@ public class ZealgainsPlugin extends Plugin
 		Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
 		boolean overCallAlertTriggered = false;
 
+		// Process requested slots in ascending numeric order (1→5) regardless of how they were
+		// typed — e.g. "b21" behaves identically to "b12" — so a reversed multi-digit call doesn't
+		// trigger a false "out of order" rejection against a slot claimed earlier in the same call.
+		boolean[] requested = new boolean[6];
 		for (char c : kills.toCharArray())
 		{
-			int killNumber = Character.getNumericValue(c);
+			requested[Character.getNumericValue(c)] = true;
+		}
+
+		for (int killNumber = 1; killNumber <= 5; killNumber++)
+		{
+			if (!requested[killNumber]) continue;
 
 			if (killNumber == 5 && !validateKill5(team, sender, secondsRemaining)) continue;
 
@@ -1025,6 +1175,15 @@ public class ZealgainsPlugin extends Plugin
 		return total;
 	}
 
+	// Single source of truth for "avatar at full HP+strength" — used by checkAvatarDump() and
+	// the ::zgteam debug command so they can never disagree about what "ready" means.
+	// A health/strength reading of -1 (widget null/unparseable — e.g. avatar despawned/respawning)
+	// always evaluates to not-ready rather than accidentally comparing against an unset max.
+	private boolean isAvatarReady(int health, int maxHealth, int strength, int maxStrength)
+	{
+		return maxHealth > 0 && health >= maxHealth && maxStrength > 0 && strength >= maxStrength;
+	}
+
 	private void checkAvatarDump()
 	{
 		Widget blueHealthW   = client.getWidget(375, 15);
@@ -1032,15 +1191,14 @@ public class ZealgainsPlugin extends Plugin
 		Widget redHealthW    = client.getWidget(375, 16);
 		Widget redStrengthW  = client.getWidget(375, 20);
 
-		if (blueHealthW == null || blueStrengthW == null ||
-			redHealthW == null || redStrengthW == null) return;
-
-		int blueHealth   = parseWidgetValue(blueHealthW.getText());
-		int blueStrength = parseWidgetValue(blueStrengthW.getText());
-		int redHealth    = parseWidgetValue(redHealthW.getText());
-		int redStrength  = parseWidgetValue(redStrengthW.getText());
-
-		if (blueHealth < 0 || blueStrength < 0 || redHealth < 0 || redStrength < 0) return;
+		// Each avatar's widgets read invalid while that avatar is despawned/respawning between
+		// kills. Track each value independently instead of bailing the whole tick — otherwise
+		// your own avatar respawning would freeze obeliskWarnActive on stale data, even though
+		// only the enemy avatar's readiness actually matters for your team's dump decision.
+		int blueHealth   = blueHealthW   != null ? parseWidgetValue(blueHealthW.getText())   : -1;
+		int blueStrength = blueStrengthW != null ? parseWidgetValue(blueStrengthW.getText()) : -1;
+		int redHealth    = redHealthW    != null ? parseWidgetValue(redHealthW.getText())    : -1;
+		int redStrength  = redStrengthW  != null ? parseWidgetValue(redStrengthW.getText())  : -1;
 
 		// Track observed maximums so full HP can be detected without hardcoding
 		if (blueHealth > maxBlueHealth)     maxBlueHealth   = blueHealth;
@@ -1069,36 +1227,40 @@ public class ZealgainsPlugin extends Plugin
 		}
 		else if ("r".equals(localTeam))
 		{
-			boolean blueAvatarReady = maxBlueHealth > 0 && blueHealth >= maxBlueHealth
-					&& maxBlueStrength > 0 && blueStrength >= maxBlueStrength;
+			boolean blueAvatarReady = isAvatarReady(blueHealth, maxBlueHealth, blueStrength, maxBlueStrength);
 			if (!blueAvatarReady)
 			{
 				obeliskWarnActive = true;
 			}
 			else
 			{
-				// Avatar ready — keep warning if next dump is kill 5 but window not yet open
+				// Avatar ready — keep warning if next dump is kill 5 but window not yet open.
+				// If the kill-count widget is unreadable (-1), treat it as "possibly kill 5"
+				// rather than assuming it's safe — a transient glitch must not silently clear
+				// the kill-5 warning right when it matters most.
 				Widget redKillsW = client.getWidget(375, 12);
 				String killText = redKillsW != null ? redKillsW.getText() : null;
 				int redKills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
-				obeliskWarnActive = redKills == 4 && !isDumpWindowOpen();
+				obeliskWarnActive = (redKills == 4 || redKills == -1) && !isDumpWindowOpen();
 			}
 		}
 		else
 		{
-			boolean redAvatarReady = maxRedHealth > 0 && redHealth >= maxRedHealth
-					&& maxRedStrength > 0 && redStrength >= maxRedStrength;
+			boolean redAvatarReady = isAvatarReady(redHealth, maxRedHealth, redStrength, maxRedStrength);
 			if (!redAvatarReady)
 			{
 				obeliskWarnActive = true;
 			}
 			else
 			{
-				// Avatar ready — keep warning if next dump is kill 5 but window not yet open
+				// Avatar ready — keep warning if next dump is kill 5 but window not yet open.
+				// If the kill-count widget is unreadable (-1), treat it as "possibly kill 5"
+				// rather than assuming it's safe — a transient glitch must not silently clear
+				// the kill-5 warning right when it matters most.
 				Widget blueKillsW = client.getWidget(375, 11);
 				String killText = blueKillsW != null ? blueKillsW.getText() : null;
 				int blueKills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
-				obeliskWarnActive = blueKills == 4 && !isDumpWindowOpen();
+				obeliskWarnActive = (blueKills == 4 || blueKills == -1) && !isDumpWindowOpen();
 			}
 		}
 
@@ -1110,14 +1272,15 @@ public class ZealgainsPlugin extends Plugin
 			obeliskWarnActive = true;
 		}
 
-		// Avatar dump alerts require all four max values to be established first
-		if (maxBlueHealth == 0 || maxBlueStrength == 0 || maxRedHealth == 0 || maxRedStrength == 0) return;
+		// Note: no "all four maxes established" gate here — isAvatarReady() already returns
+		// false for whichever side hasn't been observed yet, and the kill-5 pre-warning below
+		// doesn't depend on HP/Strength maxes at all, so it shouldn't be blocked by them either.
 
 		// Alerts are always directed at the player's own team — only show if localTeam is known
 		boolean showBlueAlert = "r".equals(localTeam); // blue avatar ready → red team dumps
 		boolean showRedAlert  = "b".equals(localTeam); // red avatar ready → blue team dumps
-		// Dev overrides (dumpAlertMode=ALL / overrideCallFilter) bypass the team lock for testing
-		if (config.overrideCallFilter() || config.dumpAlertMode() == ZealgainsConfig.DumpAlertMode.ALL)
+		// Dev override (dumpAlertMode=ALL) bypasses the team lock for testing
+		if (config.dumpAlertMode() == ZealgainsConfig.DumpAlertMode.ALL)
 		{
 			showBlueAlert = true;
 			showRedAlert  = true;
@@ -1134,7 +1297,7 @@ public class ZealgainsPlugin extends Plugin
 		// No notification. Not gated by avatarAlerts or team filter.
 		// Winning team: "DO NOT DUMP UNTIL X ON TIMER"; everyone else: "DO NOT DUMP"
 		int preWarnTime = getGameTimeRemaining();
-		if (preWarnTime != -1 && !isDumpWindowOpen())
+		if (config.enableFragging() && preWarnTime != -1 && !isDumpWindowOpen())
 		{
 			boolean fireEarly = !kill5PreWarnedEarly && preWarnTime <= 315;
 			boolean fireLate  = !kill5PreWarnedLate  && preWarnTime <= 305;
@@ -1198,8 +1361,8 @@ public class ZealgainsPlugin extends Plugin
 		}
 
 		// Blue avatar at full → Red team should dump
-		boolean blueReady = blueHealth >= maxBlueHealth && blueStrength >= maxBlueStrength;
-		if (blueReady && !blueAvatarDumpAlerted && showBlueAlert && hasEnoughFragments)
+		boolean blueReady = isAvatarReady(blueHealth, maxBlueHealth, blueStrength, maxBlueStrength);
+		if (config.enableFragging() && blueReady && !blueAvatarDumpAlerted && showBlueAlert && hasEnoughFragments)
 		{
 			Widget redKillsW = client.getWidget(375, 12);
 			int nextRedKill = (redKillsW != null ? Math.max(0, parseWidgetValue(redKillsW.getText())) : 0) + 1;
@@ -1241,15 +1404,19 @@ public class ZealgainsPlugin extends Plugin
 				}
 			}
 		}
-		else if (!blueReady)
+		// Only clear the alerted flags on a confirmed drop below full HP/strength — a transient
+		// invalid widget read (-1, e.g. a one-tick UI hiccup) must not re-arm the alert, or it
+		// would fire a duplicate "avatar ready to dump" message once the reading recovers even
+		// though the avatar never actually left full HP.
+		else if (blueHealth >= 0 && blueStrength >= 0 && !blueReady)
 		{
 			blueAvatarDumpAlerted = false;
 			blueEarlyDumpWarned = false;
 		}
 
 		// Red avatar at full → Blue team should dump
-		boolean redReady = redHealth >= maxRedHealth && redStrength >= maxRedStrength;
-		if (redReady && !redAvatarDumpAlerted && showRedAlert && hasEnoughFragments)
+		boolean redReady = isAvatarReady(redHealth, maxRedHealth, redStrength, maxRedStrength);
+		if (config.enableFragging() && redReady && !redAvatarDumpAlerted && showRedAlert && hasEnoughFragments)
 		{
 			Widget blueKillsW = client.getWidget(375, 11);
 			int nextBlueKill = (blueKillsW != null ? Math.max(0, parseWidgetValue(blueKillsW.getText())) : 0) + 1;
@@ -1291,7 +1458,9 @@ public class ZealgainsPlugin extends Plugin
 				}
 			}
 		}
-		else if (!redReady)
+		// Same rationale as the blue branch above — only a confirmed reading below full
+		// HP/strength should re-arm the alert, not a transient invalid (-1) widget read.
+		else if (redHealth >= 0 && redStrength >= 0 && !redReady)
 		{
 			redAvatarDumpAlerted = false;
 			redEarlyDumpWarned = false;
@@ -1503,8 +1672,11 @@ public class ZealgainsPlugin extends Plugin
 	@Subscribe
 	public void onClientTick(ClientTick event)
 	{
-		if (!config.pmCheckerHighlight() && !config.highlightOnFl() && !config.enableBanList()) return;
-		refreshChatHighlights();
+		if (config.pmCheckerHighlight() || config.highlightOnFl() || config.enableBanList())
+		{
+			refreshChatHighlights();
+		}
+		reorderFcMemberMenu();
 	}
 
 	private void refreshChatHighlights()
