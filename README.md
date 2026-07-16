@@ -12,22 +12,26 @@ Zealgains is built for Zealgains FC ranks and fraggers who need to coordinate ca
 
 ## Call Tracking
 
-Players call their kills in FC chat using the format `r1r2`, `b3`, `r1r2r3`, etc. Calls can appear anywhere in the message — `"guess i can do r5 too"` registers as an r5 call.
+Players call their kills in FC chat using the format `r1r2`, `b3`, `r1r2r3`, etc. **The call must be the first thing in the message** — `r1` registers, but `"who has r1"` or `"i'll take r2"` do not, since the call doesn't start the message.
 
 - **Sequential enforcement** — Calls must be made in order. Calling `b2` before `b1` is rejected with an alert and the slot stays open — there is no automatic correction or queuing.
 - **3-call cap before 12:00** — Players cannot claim more than 3 slots until 12:00 remains. Extra calls are rejected and the slot stays open.
 - **Team lock** — Each player is locked to one team per game. Their first call determines their team; cross-team calls are rejected.
 - **B5 rule** — B5 is only valid after 12:00 and only if R5 has not been claimed. If R5 and B5 are called on the same tick, R5 wins. If B5 is already claimed and R5 is called later, R5 is rejected. When B5 is claimed, R5 disappears from the overlay.
 
-### Noise filter
+### Call parsing
 
-Messages containing any of the following are ignored before call detection runs:
+The plugin walks the message from the start, capturing the leading run of same-team call tokens (`r1`, `r123`, `r1r2r3`, `r1 r2 r3`, etc. are all valid). Parsing stops at the first token that isn't a call, or rejects outright if a later token is a valid call for the *other* team (mixed-team messages).
 
-`?` · `need` · `open` · `who` · `call` · `want` · `you` · `getting` · `go get` · `grab` · `grabbing`
+- If the message doesn't start with a call, it's ignored entirely — no filter needed for things like `"who has r1?"`, `"need r2"`, `"call r3"`.
+- If it does start with a call, anything typed after it as a **separate word** (`r1 ty`, `r2 sounds good`) is fine **unless** it contains a flagged word — this catches cases where the call is real text but not actually a claim, e.g. `"r1 taken"` or `"r2 still open?"`.
+- If garbage is glued directly onto the call with **no space** (e.g. `r1!`, `b12\`), **up to 1 stray character is tolerated** and folded into the same flagged-word check. **2 or more glued-on characters reject the whole call outright** (e.g. `b12ss`, `B34coolname`) — this is what stops ordinary chat that happens to start with call-shaped digits from being parsed as a call attempt, while still catching genuine fat-fingered keystrokes like a stray backslash before Enter.
+
+Flagged words checked only in the text *after* the call: `?` · `need` · `open` · `who` · `call` · `want` · `you` · `getting` · `go get` · `grab` · `grabbing` · `available` · `anyone got` · `free` · `someone` · `anybody` · `is there` · `can i` · `taken` · `unclaimed` · `uncalled` · `please` · `pls` · `plz` · `wasn't` · `was not`
 
 ### Username protection
 
-Call patterns embedded in usernames are rejected. A match is only accepted if the `r#` / `b#` sequence is not immediately preceded or followed by a letter, digit, underscore, or hyphen — so `r1username`, `b34coolname`, and `b1-tag` are all ignored.
+A username like `r1username` or `b34coolname` can never register as a call — the parser only tolerates a single stray character glued directly onto a call token before rejecting it outright (see **Call parsing** above), and usernames are always longer than that.
 
 ---
 
@@ -58,21 +62,28 @@ When both health and strength are at their observed maximum, an alert fires in g
 - **Dump 5** — Gated behind the dump window: ≤5:00 remaining (or ≤4:45 with 40+ FC members). Retries every tick until both conditions are met.
 - **Early warning** — When 40+ FC members are present, a warning fires at 5:05 reminding players not to dump at 5:00 and to wait for 4:45.
 
-Avatar alerts are filtered by your team — you only see alerts for the enemy avatar. Team is detected from varbit 3815 (set automatically when you join a Soul Wars team) and from your own call history as a fallback.
+Avatar alerts are filtered by your team — you only see alerts for the enemy avatar. Team is detected with a three-tier fallback: varbit 3815 (set automatically when you join a Soul Wars team), your equipped Soul Wars cape if the varbit isn't set, and your own call history as a last resort.
+
+---
+
+## Disabling Fragging Features
+
+**Enable Fragging Features** (General Settings, top of the section) is a master toggle for players who don't want the frag-calling system at all. Turning it off hides the call tracker overlay and disables dump-ready alerts and the kill-5 pre-warning. The **DO NOT DUMP** obelisk warning still shows, but Sacrifice is no longer deprioritized — dumps are never blocked by this toggle.
 
 ---
 
 ## Obelisk Warning
 
-The plugin highlights the Soul Obelisk in **red** with **DO NOT DUMP** text and optionally deprioritizes the Sacrifice option in three situations:
+The plugin highlights the Soul Obelisk in **red** with **DO NOT DUMP** text and optionally deprioritizes the Sacrifice option in four situations:
 
 1. **Obelisk is white (uncontrolled)** — dumping here is always wasted regardless of avatar HP.
 2. **Obelisk is the wrong color for your team** — red player on a blue obelisk, or blue player on a red obelisk.
 3. **Obelisk is your team's color but the avatar isn't at full HP+strength** — dumping now is off-color.
+4. **You're in the game but hold no specific kill call** — the warning stays on permanently for uncalled participants, even if the avatar is at full HP.
 
-The **DO NOT DUMP** overlay is only visible to players who have an active kill call or have signed up as a runner, so spectators do not see it. Enable **Always Show Dump Overlay** (Developer Options) to bypass this.
+By default (**Dump Warning Visibility: Always**, General Settings), the overlay and Sacrifice deprioritization apply to everyone, including spectators. Switching that setting to **Smart Filter** hides both from anyone the plugin can't confirm is actively playing (via varbit, Soul Wars cape, or call history). **Always Show Dump Overlay** (Developer Options) is a dev override that forces it back on for everyone even while Smart Filter is selected — useful for testing.
 
-**Prevent Dumps When Not Ready** (General Settings) deprioritizes the Sacrifice-Fragments left-click option on the obelisk, making Walk Here the default. Right-clicking still lets you Sacrifice normally.
+**Prevent Dumps When Not Ready** (General Settings) deprioritizes the Sacrifice-Fragments left-click option on the obelisk, making Walk Here the default, in the same four situations as the highlight above. Right-clicking still lets you Sacrifice normally.
 
 ---
 
@@ -99,7 +110,7 @@ Blue Calls — B1: PlayerD  B2: PlayerE
 Final Score — Red 3 - Blue 2  —  Time remaining: 2:14
 ```
 
-Colors for the header, team names, and score line are individually configurable under **Color Options**. Only fires on auto-clear; manual `::zgreset` skips it.
+Colors for the header, team names, and score line are individually configurable under **Color Options**. Only fires on auto-clear; a manual reset skips it.
 
 Auto-clear triggers on game-end chat messages and also on idle-kick (detected via varbit 3815, which drops to 0 whenever the player leaves Soul Wars for any reason).
 
@@ -136,9 +147,6 @@ The plugin tracks the majority world of the Friends Chat. Calls from players on 
 
 | Command | Description |
 |---------|-------------|
-| `::zgreset` | Shows a confirmation dialog, then clears all tracked calls and runners |
-| `::zgreset r2 b3` | Resets specific slots. Remaining callers reshuffle into sequential order; open slots announced in chat |
-| `::zgreset r34` | Shorthand — resets R3 and R4 in one command |
 | `::zgsync` | Force-refreshes the ban list (5-minute cooldown; rank-only) |
 | `::zgteam` | Debug — prints team detection state to chat: varbit value, cached team, call-history team, resolved team, obelisk warn status |
 
@@ -168,20 +176,22 @@ When using targeted reset, the reshuffle caps blue open-slot announcements at B4
 
 ## Configuration Sections
 
+Sections appear top-to-bottom in this order in the config panel:
+
 | Section | Contents |
 |---------|----------|
-| **Rules Guide** | Call rules, team lock rules, dumping rules, and runner callout formats |
-| **General Settings** | Display mode, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, obelisk highlight, prevent dumps |
-| **Color Options** | Per-element color pickers and global opacity slider for alerts, overlay, and summaries |
+| **Rules Guide** | Call rules, dumping rules, and how to frag. |
+| **Valid Callouts** | Valid call formats, invalid examples, flagged-word list, and frag runner callouts. |
+| **General Settings** | Enable Fragging Features (master toggle), display mode, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility |
 | **General Settings Guide** | Descriptions of every General Settings option |
-| **Overlay Usage** | How to read the on-screen call tracker overlay |
-| **Chat Commands** | Local commands (`::zgreset`) and rank broadcast commands (`!zgreset`) |
-| **ZG Ranks Settings** | Rule break alerts, cross-world detection, FL/PM highlights, ban list — for ZG Star Ranks only |
+| **Color Options** | Per-element color pickers and global opacity slider for alerts, overlay, and summaries |
+| **ZG Ranks Settings** | Rule break alerts, cross-world detection, FL/PM highlights, ban list, left-click add/remove on FC members — for ZG Star Ranks only |
 | **ZG Ranks Guide** | Rank commands (`!zgreset`, `::zgsync`) and explanations of every ZG Ranks option |
+| **Overlay Usage** | How to read the on-screen call tracker overlay |
 | **Developer Options** | Advanced overrides — not needed for normal play |
 
 ---
 
-## Discord
+## Rules & Methods
 
-For rules and methods: **discord.gg/riseabove**
+For rules and methods, please ask a Star Rank in FriendsChat.

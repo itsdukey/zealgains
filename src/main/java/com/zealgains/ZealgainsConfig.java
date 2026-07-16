@@ -42,8 +42,7 @@ public interface ZealgainsConfig extends Config
 			name = "<html><body width='170'>"
 					+ "<font color='#FFA500'><b>⚠ Read first:</b><br>"
 					+ "• Rules Guide<br>"
-					+ "• Settings Guide<br>"
-					+ "• Overlay</font>"
+					+ "• Valid Callouts</font>"
 					+ "</body></html>",
 			description = "",
 			position = 0
@@ -60,15 +59,29 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "General Settings",
 			description = "Display and in-game alert options",
-			position = 4
+			position = 3
 	)
 	String generalSection = "generalSection";
+
+	@ConfigItem(
+			keyName = "enableFragging",
+			name = "Enable Fragging Features",
+			description = "<html>Master toggle for the frag-calling system. Turn <b>off</b> to hide the call tracker overlay "
+					+ "and disable dump-ready alerts and the kill-5 pre-warning.<br><br>"
+					+ "The <b>Do Not Dump</b> obelisk warning still shows, but Sacrifice will no longer be deprioritized — dumps are not blocked.</html>",
+			position = 0,
+			section = generalSection
+	)
+	default boolean enableFragging()
+	{
+		return true;
+	}
 
 	@ConfigItem(
 			keyName = "displayMode",
 			name = "Display Mode",
 			description = "Choose where to display the call tracker",
-			position = 0,
+			position = 1,
 			section = generalSection
 	)
 	default DisplayMode displayMode()
@@ -80,7 +93,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "autoClear",
 			name = "Auto-Clear on Game End",
 			description = "Automatically clear the tracker when the Soul Wars game ends",
-			position = 1,
+			position = 2,
 			section = generalSection
 	)
 	default boolean autoClear()
@@ -92,7 +105,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "showGameSummary",
 			name = "End-of-Game Summary",
 			description = "Print a call and score summary to chat when the game ends (requires Auto-Clear)",
-			position = 2,
+			position = 3,
 			section = generalSection
 	)
 	default boolean showGameSummary()
@@ -104,7 +117,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "showGameStatus",
 			name = "Show Timer & Score",
 			description = "Display the live game timer and current kill score in the overlay and side panel",
-			position = 3,
+			position = 4,
 			section = generalSection
 	)
 	default boolean showGameStatus()
@@ -116,7 +129,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "hideOutsideSoulWars",
 			name = "Hide Overlay Outside Game",
 			description = "Only show the on-screen overlay when inside a Soul Wars game",
-			position = 4,
+			position = 5,
 			section = generalSection
 	)
 	default boolean hideOutsideSoulWars()
@@ -129,7 +142,7 @@ public interface ZealgainsConfig extends Config
 			name = "Dump Alert (Chat)",
 			description = "<html>Shows a team-directed chat message when the avatar is ready to dump (e.g. <b>Red team: Avatar is ready for the 3rd dump</b>).<br><br>"
 					+ "Toggle off to silence in-game chat messages while keeping the RuneLite notification (controlled separately below).</html>",
-			position = 5,
+			position = 6,
 			section = generalSection
 	)
 	default boolean avatarAlertChat()
@@ -143,7 +156,7 @@ public interface ZealgainsConfig extends Config
 			description = "<html>Sends a RuneLite popup or sound notification when it is time to dump.<br><br>"
 					+ "The chat message is controlled separately by <b>Dump Alert (Chat)</b> above.<br><br>"
 					+ "Requires 16+ soul fragments. Kill 1 suppressed. Kill 5 fires only when the dump window opens (5:00, or 4:45 with 40+ in FC).</html>",
-			position = 6,
+			position = 7,
 			section = generalSection
 	)
 	default Notification avatarAlerts()
@@ -156,7 +169,7 @@ public interface ZealgainsConfig extends Config
 			name = "Kill-5 Pre-Warning",
 			description = "<html>Fires a chat warning at <b>5:15</b> and again at <b>5:05</b> when kill 5 is next but the dump window has not opened yet.<br><br>"
 					+ "Winning team sees the exact safe time (<b>Do not dump until 5:00 on the timer</b>). Losing team sees nothing.</html>",
-			position = 7,
+			position = 8,
 			section = generalSection
 	)
 	default boolean showKill5PreWarning()
@@ -169,7 +182,7 @@ public interface ZealgainsConfig extends Config
 			name = "Show Fragment Count",
 			description = "<html>Adds a <b>Frags: ##</b> line to the overlay showing your current soul fragment count during a game.<br><br>"
 					+ "Useful for tracking whether you have the 16-fragment minimum needed for a dump.</html>",
-			position = 8,
+			position = 9,
 			section = generalSection
 	)
 	default boolean showFragCount()
@@ -184,7 +197,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "General Settings Guide",
 			description = "Commands, overlay behaviour, and alert reference",
-			position = 3,
+			position = 4,
 			closedByDefault = true
 	)
 	String generalGuideSection = "generalGuideSection";
@@ -192,22 +205,13 @@ public interface ZealgainsConfig extends Config
 	@ConfigItem(
 			keyName = "guideGeneral",
 			name = "<html><body width='170'>"
-					+ "<font color='#87CEEB'><b>── General Settings Options ──</b></font><br><br>"
+					+ "<font color='#87CEEB'><b>── General Settings ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
-					+ "<font color='#FFB347'>Display Mode</font><br>"
-					+ "Controls where the call tracker appears.<br>"
-					+ "Overlay — floating on-screen panel.<br>"
-					+ "Side Panel — RuneLite nav bar only.<br>"
-					+ "Both — overlay and side panel.<br>"
-					+ "None — hidden entirely.<br><br>"
-					+ "<font color='#FFB347'>Auto-Clear on Game End</font><br>"
-					+ "Clears all kill calls and runner sign-ups automatically when a Soul Wars game ends. Recommended on.<br><br>"
+					+ "<font color='#FFB347'>Enable Fragging Features</font><br>"
+					+ "Master toggle for the frag-calling system. Turn off to hide the call tracker overlay and disable dump-ready alerts and the kill-5 pre-warning. "
+					+ "The Do Not Dump obelisk warning still shows, but Sacrifice is no longer deprioritized.<br><br>"
 					+ "<font color='#FFB347'>End-of-Game Summary</font><br>"
 					+ "Prints caller assignments, final score, and time remaining to chat at game end. <b>Requires Auto-Clear to be enabled.</b><br><br>"
-					+ "<font color='#FFB347'>Show Timer &amp; Score</font><br>"
-					+ "Displays the live game countdown and current kill score in the overlay and side panel.<br><br>"
-					+ "<font color='#FFB347'>Hide Overlay Outside Game</font><br>"
-					+ "Hides the overlay when you are not inside a Soul Wars game — prevents clutter in the lobby and between games. Recommended on.<br><br>"
 					+ "<font color='#FFB347'>Dump Alert (Chat)</font><br>"
 					+ "Shows a team-directed chat message when the avatar is ready to dump (e.g. <b>Red team: Avatar is ready for the 3rd dump</b>). "
 					+ "Toggle off to silence in-game chat while keeping the RuneLite notification below.<br><br>"
@@ -217,9 +221,6 @@ public interface ZealgainsConfig extends Config
 					+ "<font color='#FFB347'>Kill-5 Pre-Warning</font><br>"
 					+ "Fires a chat warning at 5:15 and again at 5:05 when kill 5 is next but the dump window has not opened yet. "
 					+ "Winning team sees the safe dump time. Losing team sees nothing.<br><br>"
-					+ "<font color='#FFB347'>Show Fragment Count</font><br>"
-					+ "Adds a <b>Frags: ##</b> line to the overlay showing your current soul fragment count during a game. "
-					+ "Useful for tracking whether you have the 16-fragment minimum needed for a dump.<br><br>"
 					+ "<font color='#FFB347'>Do Not Dump Warning</font><br>"
 					+ "Draws a red tile and DO NOT DUMP text over the Soul Obelisk when dumping would be wasted. "
 					+ "Activates when the obelisk is white (uncontrolled), the wrong color for your team, your color but avatar not at full HP+strength, "
@@ -248,7 +249,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "Overlay Usage",
 			description = "How to read the on-screen call tracker overlay",
-			position = 2,
+			position = 8,
 			closedByDefault = true
 	)
 	String overlayGuideSection = "overlayGuideSection";
@@ -256,24 +257,28 @@ public interface ZealgainsConfig extends Config
 	@ConfigItem(
 			keyName = "guideOverlay",
 			name = "<html><body width='170'>"
-					+ "<font color='#87CEEB'><b>── Call Tracker ──</b></font><br><br>"
+					+ "<font color='#87CEEB'><b>── Call Rules ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
-					+ "<b>Red Team</b> always shows R1 through R5.<br>"
-					+ "<b>Blue Team</b> always shows B1 through B4.<br><br>"
-					+ "<font color='#FFB347'>B5</font> appears only after <b>12:00</b> on the timer and only if R5 is still unclaimed — it disappears if R5 is claimed.<br><br>"
-					+ "<font color='#FFB347'>R5</font> disappears from the overlay once B5 is claimed.<br><br>"
-					+ "Each row shows the call slot label and the name of the player who claimed it. Empty slots show nothing.<br><br>"
+					+ "Calls must be in order — each slot requires the previous to be filled first.<br><br>"
+					+ "Max 3 calls per player before 12:00 on the timer.<br><br>"
+					+ "Each player locks to one team per game — first call decides it.<br><br>"
+					+ "B5 is valid only after 12:00 and only if R5 is unclaimed.<br><br>"
 					+ "</font>"
-					+ "<font color='#87CEEB'><b>── Timer &amp; Score ──</b></font><br><br>"
+					+ "<font color='#87CEEB'><b>── Valid Callouts ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
-					+ "When <b>Show Timer &amp; Score</b> is on, a live game countdown and current kill score (e.g. <b>Red 3 — Blue 2</b>) appear at the top of the overlay.<br><br>"
-					+ "The <b>Players: ##</b> line is always shown during a game. It displays the lobby headcount frozen at game-start — useful for knowing whether the 4:45 dump window applies (40+ players).<br><br>"
+					+ "Your call must be the <b>start</b> of your message:<br><br>"
+					+ "<font color='#FFB347'>Single</font><br>"
+					+ "r1 &nbsp;r2 &nbsp;r3 &nbsp;r4 &nbsp;r5<br>"
+					+ "b1 &nbsp;b2 &nbsp;b3 &nbsp;b4 &nbsp;b5*<br><br>"
+					+ "<font color='#FFB347'>Multiple</font> — r12, r1r2, r123, r1r2r3 (compact or spaced)<br><br>"
+					+ "<font color='#A0A0A0'>*b5 only valid after 12:00, only if R5 is unclaimed.</font><br><br>"
+					+ "<font color='#A0A0A0'>Anything you add after your call (e.g. <b>r1 ty</b>) is fine, as long as it doesn't contain a word the plugin treats as a red flag — see the Rules Guide's Invalid Examples for the full list.</font><br><br>"
 					+ "</font>"
 					+ "<font color='#87CEEB'><b>── Runners ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
 					+ "A <b>Runners</b> section appears at the bottom of the overlay when at least one player has signed up as a frag runner.<br><br>"
 					+ "Red runners and blue runners are listed separately under their team color.<br><br>"
-					+ "Runner sign-up formats: <font color='#FFB347'>^r &nbsp;r^ &nbsp;&gt;r &nbsp;r&gt;</font> (red) &nbsp;|&nbsp; <font color='#FFB347'>^b &nbsp;b^ &nbsp;&gt;b &nbsp;b&gt;</font> (blue)<br><br>"
+					+ "Runner sign-up formats: <font color='#FFB347'>^r &nbsp;r^ &nbsp;&gt;r &nbsp;r&gt;</font> (red) <br> <font color='#FFB347'>^b &nbsp;b^ &nbsp;&gt;b &nbsp;b&gt;</font> (blue)<br><br>"
 					+ "</font>"
 					+ "<font color='#87CEEB'><b>── Obelisk Warning ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
@@ -285,19 +290,6 @@ public interface ZealgainsConfig extends Config
 					+ "• You are <b>in the game without a specific kill call</b><br><br>"
 					+ "When <b>Prevent Dumps When Not Ready</b> is on, the <b>Sacrifice</b> option is also moved off left-click on the obelisk while the warning is active — right-click Sacrifice still works.<br><br>"
 					+ "Use <b>Dump Warning Visibility</b> (Always / Smart Filter) to control whether the warning shows to everyone or only to players with active calls.<br><br>"
-					+ "</font>"
-					+ "<font color='#87CEEB'><b>── Display ──</b></font><br><br>"
-					+ "<font color='#A0A0A0'>"
-					+ "<font color='#FFB347'>Display Mode</font><br>"
-					+ "Controls where the call tracker appears.<br>"
-					+ "Overlay — floating on-screen panel.<br>"
-					+ "Side Panel — RuneLite nav bar only.<br>"
-					+ "Both — overlay and side panel.<br>"
-					+ "None — hidden entirely.<br><br>"
-					+ "<font color='#FFB347'>Hide Overlay Outside Game</font><br>"
-					+ "Hides the overlay when you are not inside a Soul Wars game. Recommended — keeps your screen clean between games.<br><br>"
-					+ "<font color='#FFB347'>Colors &amp; Opacity</font><br>"
-					+ "Every overlay color (team labels, call slots, timer, score, runners, background) is customizable under <b>Color Options</b>. The <b>Overlay Global Opacity %</b> slider scales all overlay elements at once."
 					+ "</font></body></html>",
 			description = "",
 			position = 0,
@@ -309,55 +301,13 @@ public interface ZealgainsConfig extends Config
 	}
 
 	// ─────────────────────────────────────────────
-	// CHAT COMMANDS
-	// ─────────────────────────────────────────────
-
-	@ConfigSection(
-			name = "Chat Commands",
-			description = "In-game chat commands for the Zealgains plugin",
-			position = 6,
-			closedByDefault = true
-	)
-	String commandsGuideSection = "commandsGuideSection";
-
-	@ConfigItem(
-			keyName = "guideCommands",
-			name = "<html><body width='170'>"
-					+ "<font color='#87CEEB'><b>── Local Commands (you only) ──</b></font><br><br>"
-					+ "<font color='#A0A0A0'>"
-					+ "<font color='#FFB347'>::zgreset</font><br>"
-					+ "Resets the entire board locally. A confirmation dialog will appear before anything is cleared.<br><br>"
-					+ "<font color='#FFB347'>::zgreset r/b ##</font><br>"
-					+ "Resets targeted calls locally. Remaining callers reshuffle and open slots are announced.<br>"
-					+ "Supports multiple args:<br>"
-					+ "<font color='#FFB347'>::zgreset r2 b3</font> <br>or<br> <font color='#FFB347'>::zgreset r34</font><br><br>"
-					+ "</font>"
-					+ "<font color='#87CEEB'><b>── Rank Broadcast (Captain+ only) ──</b></font><br><br>"
-					+ "<font color='#A0A0A0'>"
-					+ "<font color='#FFB347'>!zgreset r/b ##</font><br>"
-					+ "Sends a targeted reset to FC chat. All plugin users in the FC silently apply the reset and their overlays update instantly.<br><br>"
-					+ "Only works if you are ranked Captain or above (Captain, General, Owner). Lower ranks are ignored.<br><br>"
-					+ "15-second cooldown is enforced to prevent accidental spam from multiple ranks firing at once.<br><br>"
-					+ "Supports multiple args:<br>"
-					+ "<font color='#FFB347'>!zgreset r2 b3</font> <br>or<br> <font color='#FFB347'>!zgreset r34</font>"
-					+ "</font></body></html>",
-			description = "",
-			position = 0,
-			section = commandsGuideSection
-	)
-	default boolean guideCommands()
-	{
-		return false;
-	}
-
-	// ─────────────────────────────────────────────
 	// ZG RANKS SETTINGS
 	// ─────────────────────────────────────────────
 
 	@ConfigSection(
 			name = "ZG Ranks Settings",
 			description = "Friends Chat moderation tools — ban list, highlights, and call rule alerts",
-			position = 7,
+			position = 6,
 			closedByDefault = true
 	)
 	String ranksSection = "ranksSection";
@@ -510,6 +460,21 @@ public interface ZealgainsConfig extends Config
 		return Notification.OFF;
 	}
 
+	@ConfigItem(
+			keyName = "leftClickAddRemove",
+			name = "Left Click Add/Remove",
+			description = "<html>In the Friends Chat member list, moves <b>Add Friend</b> / <b>Delete</b> to the default left-click action "
+					+ "and pushes <b>Kick</b> down to right-click only.<br><br>"
+					+ "Lets you left-click a name to add them as a friend, then left-click again to remove them once the color updates — "
+					+ "without needing a separate menu-swap plugin. Kick is never removed, just no longer the default click.</html>",
+			position = 11,
+			section = ranksSection
+	)
+	default boolean leftClickAddRemove()
+	{
+		return false;
+	}
+
 	// ─────────────────────────────────────────────
 	// ZG RANKS GUIDE
 	// ─────────────────────────────────────────────
@@ -517,7 +482,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigSection(
 			name = "ZG Ranks Guide",
 			description = "Explanation of every option in ZG Ranks Settings",
-			position = 8,
+			position = 7,
 			closedByDefault = true
 	)
 	String ranksGuideSection = "ranksGuideSection";
@@ -539,28 +504,10 @@ public interface ZealgainsConfig extends Config
 					+ "</font>"
 					+ "<font color='#87CEEB'><b>── ZG Ranks Options ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
-					+ "<font color='#FFB347'>Rule Break Alert (Chat)</font><br>"
-					+ "Shows a red chat message when a call rule is broken — out-of-order calls, team lock violations, 3-call cap, cross-world calls, and disconnect notices. Toggle off to silence chat while keeping the notification below.<br><br>"
 					+ "<font color='#FFB347'>Rule Break Alert (Notification)</font><br>"
 					+ "Sends a RuneLite notification when a call rule is broken, e.g. exceeding 3 calls before 12:00, calling out of order, or trying to call for both teams in the same game. A player's first call locks them to that team — the plugin has no way of knowing their actual in-game team.<br><br>"
-					+ "<font color='#FFB347'>Alert Cross-World Calls</font><br>"
-					+ "Detects and ignores calls from players not on the FC majority world, preventing fake calls from off-world trolls.<br><br>"
-					+ "<font color='#FFB347'>Highlight if on FL</font><br>"
-					+ "Colors FC members who appear on your Friends List using the FL Highlight Color.<br><br>"
-					+ "<font color='#FFB347'>FL Highlight Color</font><br>"
-					+ "The color used for Friends List highlights. Default: green.<br><br>"
-					+ "<font color='#FFB347'>PM Checker Highlight</font><br>"
-					+ "Colors FC members who are currently online and PM-able using the PM Highlight Color.<br><br>"
-					+ "<font color='#FFB347'>PM Highlight Color</font><br>"
-					+ "The color used for online-friend highlights. Default: yellow.<br><br>"
-					+ "<font color='#FFB347'>Enable Ban List Highlight</font><br>"
-					+ "Downloads a remote ban list and highlights any matching FC members in the Ban List Color.<br><br>"
 					+ "<font color='#FFB347'>Ban List URL</font><br>"
 					+ "Raw URL to a plain-text file of banned names, one per line. Leave blank to disable.<br><br>"
-					+ "<font color='#FFB347'>Ban List Color</font><br>"
-					+ "The color used to highlight banned players. Default: red.<br><br>"
-					+ "<font color='#FFB347'>Ban List Alerts</font><br>"
-					+ "Sends a RuneLite notification when a banned player joins the FC.<br><br>"
 					+ "</font></body></html>",
 			description = "",
 			position = 0,
@@ -577,7 +524,7 @@ public interface ZealgainsConfig extends Config
 
 	@ConfigSection(
 			name = "Rules Guide",
-			description = "Call rules, team lock rules, and runner callout formats",
+			description = "Call rules, dumping rules, and how to frag",
 			position = 1,
 			closedByDefault = true
 	)
@@ -586,8 +533,7 @@ public interface ZealgainsConfig extends Config
 	@ConfigItem(
 			keyName = "guideRules",
 			name = "<html><body width='170'>"
-					+ "<font color='#A0A0A0'>For all rules / Methods please join<br></font>"
-					+ "<font color='#5865F2'>discord.gg/riseabove</font><br><br>"
+					+ "<font color='#A0A0A0'>For all rules / Methods Please ask a Star Rank<br></font><br>"
 					+ "<font color='#87CEEB'><b>── Call Rules ──</b></font><br>"
 					+ "<font color='#A0A0A0'>"
 					+ "Calls are in order — each slot requires the previous to be filled first.<br><br>"
@@ -599,9 +545,19 @@ public interface ZealgainsConfig extends Config
 					+ "First to mid gets dump priority, unless someone else has more calls.<br><br>"
 					+ "In case of disputes, the highest Star+ rank makes the call.<br><br>"
 					+ "</font>"
+					+ "<font color='#87CEEB'><b>── Dumping Rules ──</b></font><br>"
+					+ "<font color='#A0A0A0'>"
+					+ "<b>Capture the obelisk</b> before dumping — <b>do not</b> dump frags off-color.<br><br>"
+					+ "Only dump when the enemy Avatar is at <b>100% HP and strength</b>.<br><br>"
+					+ "<b>Do not</b> overdump — dumping the same kill as another fragger wastes it.<br><br>"
+					+ "<b>Do not dump more kills than you called.</b><br><br>"
+					+ "<b>Do not</b> dump the winning kill before <b>5:00</b> remaining.<br>"
+					+ "With <b>40+ people</b> in FC, wait until <b>4:45</b> instead.<br><br>"
+					+ "</font>"
 					+ "<font color='#87CEEB'><b>── How to Frag ──</b></font><br>"
 					+ "<font color='#A0A0A0'>"
-					+ "<font color='#FF6666'>Watch 'How to Frag' by Gods Account on YouTube for a full visual walkthrough.</font><br><br>"
+					+ "<font color='#FF6666'>Watch 'How to Frag' by Gods Account on YouTube for a full visual walkthrough.</font><br>"
+					+ "<i><font color='#FFB347'>You can skip this section if you watch the video above.</font></i><br><br>"
 					+ "<font color='#FFB347'>Setup</font><br>"
 					+ "Install the <b>Soul Wars</b> plugin by <b>Lucid Poro</b> from the Plugin Hub.<br><br>"
 					+ "<font color='#FFB347'>Benefits of Fragging</font><br>"
@@ -620,19 +576,34 @@ public interface ZealgainsConfig extends Config
 					+ "<font color='#FFB347'>Correcting calls</font><br>"
 					+ "If someone takes a slot you planned, move to the next open one. "
 					+ "Example: you call r1r2, someone takes r1 first — change your call to r3. <i>your r2 will count so long as no other r2 happened prior to your call.</i><br><br>"
-					+ "</font>"
-					+ "<font color='#87CEEB'><b>── Dumping Rules ──</b></font><br>"
-					+ "<font color='#A0A0A0'>"
-					+ "<b>Capture the obelisk</b> before dumping — <b>do not</b> dump frags off-color.<br><br>"
-					+ "Only dump when the enemy Avatar is at <b>100% HP and strength</b>.<br><br>"
-					+ "<b>Do not</b> overdump — dumping the same kill as another fragger wastes it.<br><br>"
-					+ "<b>Do not dump more kills than you called.</b><br><br>"
-					+ "<b>Do not</b> dump the winning kill before <b>5:00</b> remaining.<br>"
-					+ "With <b>40+ people</b> in FC, wait until <b>4:45</b> instead.<br><br>"
-					+ "</font>"
+					+ "</font></body></html>",
+			description = "",
+			position = 0,
+			section = rulesGuideSection
+	)
+	default boolean guideRules()
+	{
+		return false;
+	}
+
+	// ───────────────────────────────────
+	// VALID CALLOUTS
+	// ───────────────────────────────────
+
+	@ConfigSection(
+			name = "Valid Callouts",
+			description = "Accepted call formats and frag runner sign-up",
+			position = 2,
+			closedByDefault = true
+	)
+	String validCalloutsSection = "validCalloutsSection";
+
+	@ConfigItem(
+			keyName = "guideValidCallouts",
+			name = "<html><body width='170'>"
 					+ "<font color='#87CEEB'><b>── Valid Callouts ──</b></font><br>"
 					+ "<font color='#A0A0A0'>"
-					+ "Callouts can appear anywhere in your message. Any of the formats below are recognised:<br><br>"
+					+ "Your call must be the <b>start</b> of your message. Any of the formats below are recognised:<br><br>"
 					+ "<font color='#FFB347'>Single kill</font><br>"
 					+ "r1 &nbsp; r2 &nbsp; r3 &nbsp; r4 &nbsp; r5<br>"
 					+ "b1 &nbsp; b2 &nbsp; b3 &nbsp; b4 &nbsp; b5*<br><br>"
@@ -645,11 +616,14 @@ public interface ZealgainsConfig extends Config
 					+ "<font color='#FFB347'>Mixed spacing</font><br>"
 					+ "r1 r2 r3 &nbsp; or &nbsp; r1 r2r3 etc.<br><br>"
 					+ "<font color='#A0A0A0'>*b5 is only valid after 12:00 and only if R5 is unclaimed.</font><br><br>"
+					+ "<font color='#A0A0A0'>Anything you type after your call is fine (e.g. <b>r1 ty</b>) — it's only rejected if it contains one of the flagged words below.</font><br><br>"
 					+ "<font color='#FF6666'>Invalid examples</font><br>"
 					+ "r2 (before r1 is claimed)<br>"
 					+ "b2 (before b1 is claimed)<br>"
 					+ "r1 b2 (mixed teams in one message)<br>"
-					+ "Messages containing: ?, need, open, who, call, want, you, getting, go get, grab — are always ignored regardless of content."
+					+ "who has r1 / need r2 / can i get r3 (call is not at the start of the message)<br>"
+					+ "r1 taken / r2 still open? (starts with a call but the rest of the message contradicts it)<br>"
+					+ "Flagged words anywhere after your call: ?, need, open, who, call, want, you, getting, go get, grab, grabbing, available, anyone got, free, someone, anybody, is there, can i, taken, unclaimed, uncalled, please, pls, plz, wasn't, was not."
 					+ "</font><br><br>"
 					+ "<font color='#87CEEB'><b>── Frag Runners ──</b></font><br>"
 					+ "<font color='#A0A0A0'>"
@@ -674,9 +648,9 @@ public interface ZealgainsConfig extends Config
 					+ "</font></body></html>",
 			description = "",
 			position = 0,
-			section = rulesGuideSection
+			section = validCalloutsSection
 	)
-	default boolean guideRules()
+	default boolean guideValidCallouts()
 	{
 		return false;
 	}
@@ -731,7 +705,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default Color avatarAlertColor()
 	{
-		return new Color(0xFF, 0x99, 0x00, 0xFF);
+		return new Color(0x66, 0x00, 0xCC, 0xFF);
 	}
 
 	@Alpha
@@ -744,7 +718,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default Color summaryHeaderColor()
 	{
-		return new Color(0xFF, 0x99, 0x00, 0xFF);
+		return new Color(0x66, 0x00, 0xCC, 0xFF);
 	}
 
 	@Alpha
@@ -783,7 +757,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default Color summaryScoreColor()
 	{
-		return new Color(0xFF, 0x99, 0x00, 0xFF);
+		return new Color(0x66, 0x00, 0xCC, 0xFF);
 	}
 
 	// ── Overlay Colors ──
@@ -931,26 +905,12 @@ public interface ZealgainsConfig extends Config
 	String devSection = "devSection";
 
 	@ConfigItem(
-			keyName = "overrideCallFilter",
-			name = "Override Call Filter",
-			description = "<html>When <b>off</b> (default), avatar alerts are filtered to your team only — "
-					+ "derived from your own calls. Alerts are suppressed until you have called.<br><br>"
-					+ "When <b>on</b>, alerts fire for both teams regardless of which team you are on.</html>",
-			position = 0,
-			section = devSection
-	)
-	default boolean overrideCallFilter()
-	{
-		return false;
-	}
-
-	@ConfigItem(
 			keyName = "enableCallsOutsideGame",
 			name = "Enable Calls Outside Game",
 			description = "<html>When <b>on</b>, the plugin processes FC calls even when you are not inside a Soul Wars game. "
 					+ "Useful for testing the overlay and call logic outside of a live game.<br><br>"
 					+ "Time-based rules (12:00 cap, B5 gate) treat the timer as 0:00 while outside a game.</html>",
-			position = 1,
+			position = 0,
 			section = devSection
 	)
 	default boolean enableCallsOutsideGame()
@@ -964,7 +924,7 @@ public interface ZealgainsConfig extends Config
 			description = "<html>When <b>on</b>, dump notifications fire even if you have fewer than 16 Soul Fragments in your inventory.<br><br>"
 					+ "By default the plugin suppresses alerts when you do not have enough fragments to cover a dump (minimum 16). "
 					+ "Enable this to always receive dump notifications regardless of inventory.</html>",
-			position = 2,
+			position = 1,
 			section = devSection
 	)
 	default boolean skipFragmentCheck()
@@ -1023,8 +983,9 @@ public interface ZealgainsConfig extends Config
 			keyName = "dumpAlertMode",
 			name = "Dump Alert Team Filter",
 			description = "<html><b>Auto</b> (default) — only alerts for the avatar your team should dump, derived from your own call history.<br><br>"
-					+ "<b>All</b> — alerts fire for both avatars regardless of which team you are on.</html>",
-			position = 3,
+					+ "<b>All</b> — alerts fire for both avatars regardless of which team you are on. "
+					+ "Enable only if you need to monitor both avatars at once — you'll be asked to confirm.</html>",
+			position = 2,
 			section = devSection
 	)
 	default DumpAlertMode dumpAlertMode()
@@ -1038,7 +999,7 @@ public interface ZealgainsConfig extends Config
 			description = "<html>When <b>on</b>, the <b>DO NOT DUMP</b> obelisk overlay shows even if you have no active calls or runner signup.<br><br>"
 					+ "By default the overlay is hidden unless you have a kill call or are a registered runner, "
 					+ "so spectators do not see it. Enable this to show it regardless.</html>",
-			position = 4,
+			position = 3,
 			section = devSection
 	)
 	default boolean alwaysShowDumpOverlay()
@@ -1052,7 +1013,7 @@ public interface ZealgainsConfig extends Config
 			description = "<html>Shows the number of players in the lobby on the overlay.<br><br>"
 					+ "Updates live while waiting for a game to start, then freezes at the game-start count for the duration of the game.<br><br>"
 					+ "Color is configurable under <b>Color Options → Overlay Lobby Count</b>.</html>",
-			position = 5,
+			position = 4,
 			section = devSection
 	)
 	default boolean showLobbyCount()
