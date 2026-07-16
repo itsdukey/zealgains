@@ -416,6 +416,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "enableBanList",
 			name = "Enable Ban List Highlight",
 			description = "Highlights players in the Friends Chat who are on a remote ban list",
+			warning = "Enabling this sends your IP address to whatever server hosts your ban list URL — not controlled or verified by RuneLite developers",
 			position = 7,
 			section = ranksSection
 	)
