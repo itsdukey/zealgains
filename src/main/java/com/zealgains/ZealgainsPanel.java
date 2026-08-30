@@ -94,7 +94,7 @@ public class ZealgainsPanel extends PluginPanel
             );
             if (result == JOptionPane.YES_OPTION)
             {
-                plugin.resetKills();
+                plugin.resetKillsFromUi();
             }
         });
         resetButton.setAlignmentX(Component.CENTER_ALIGNMENT);

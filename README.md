@@ -10,6 +10,12 @@ Zealgains is built for Zealgains FC ranks and fraggers who need to coordinate ca
 
 ---
 
+## Installation Note
+
+On a fresh install, the plugin's config panel sometimes doesn't appear right away — this is a known RuneLite client behavior on first-time Plugin Hub installs, not specific to Zealgains. If this happens, fully close and reopen RuneLite once; the config panel will be there after the restart.
+
+---
+
 ## Call Tracking
 
 Players call their kills in FC chat using the format `r1r2`, `b3`, `r1r2r3`, etc. **The call must be the first thing in the message** — `r1` registers, but `"who has r1"` or `"i'll take r2"` do not, since the call doesn't start the message.

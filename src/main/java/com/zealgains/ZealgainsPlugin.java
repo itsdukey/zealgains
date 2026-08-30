@@ -9,6 +9,7 @@ import net.runelite.api.FriendsChatManager;
 import net.runelite.api.FriendsChatMember;
 import net.runelite.api.FriendsChatRank;
 import net.runelite.api.GameObject;
+import net.runelite.api.GameState;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
@@ -26,6 +27,7 @@ import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.events.FriendsChatChanged;
 import net.runelite.api.events.FriendsChatMemberJoined;
 import net.runelite.api.events.FriendsChatMemberLeft;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.gameval.InterfaceID;
@@ -504,6 +506,26 @@ public class ZealgainsPlugin extends Plugin
 					resetKills();
 				}
 				break;
+		}
+	}
+
+	// --- GAME STATE HANDLER ---
+
+	// Logging out or hopping worlds mid-game does not reliably re-send VARBIT_SOUL_WARS_TEAM as 0 on
+	// return (varbits are only pushed when the server has a reason to change them, and leaving the game
+	// entirely isn't one) — so onVarbitChanged's auto-clear above can never fire for this case. Force a
+	// clear directly off the client-state transition instead, so tracked calls don't survive into a game
+	// the player is no longer part of.
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		if (event.getGameState() != GameState.LOGIN_SCREEN && event.getGameState() != GameState.HOPPING) return;
+		if (varbitTeam == null && redKills.isEmpty() && blueKills.isEmpty()) return;
+
+		varbitTeam = null;
+		if (config.autoClear())
+		{
+			resetKills();
 		}
 	}
 
@@ -1083,6 +1105,16 @@ public class ZealgainsPlugin extends Plugin
 
 	// --- RESET ---
 
+	// Called from the side panel's Reset button, which runs on the Swing EDT, not the client thread.
+	// resetKills() ends up reading live widgets (getGameTimeRemaining() / getLobbyPlayerCount(), both
+	// documented "must be captured on the client thread") via panel.updateKills()/updateGameStatus() —
+	// calling it directly off-thread was throwing before those reads happened, so the maps got cleared
+	// but the panel never repainted, making the reset look like a no-op. Hop onto the client thread first.
+	public void resetKillsFromUi()
+	{
+		clientThread.invokeLater(this::resetKills);
+	}
+
 	public void resetKills()
 	{
 		redKills.clear();
@@ -1366,11 +1398,16 @@ public class ZealgainsPlugin extends Plugin
 		{
 			Widget redKillsW = client.getWidget(375, 12);
 			int nextRedKill = (redKillsW != null ? Math.max(0, parseWidgetValue(redKillsW.getText())) : 0) + 1;
+			// Both teams' live kill counters can legitimately sit at 4 at the same time (they're
+			// tallied independently) — the R5/B5 call is what actually designates which team is
+			// meant to land the winning kill. Kill 5 messaging must therefore respect that call,
+			// not just the live counter, or the non-designated team gets told to dump too.
+			boolean redIsCalledWinner = redKills.containsKey(5);
 			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
 			if (nextRedKill == 5 && !isDumpWindowOpen())
 			{
 				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
-				if (!blueEarlyDumpWarned)
+				if (redIsCalledWinner && !blueEarlyDumpWarned)
 				{
 					FriendsChatManager fcm = client.getFriendsChatManager();
 					int timeRemaining = getGameTimeRemaining();
@@ -1385,7 +1422,7 @@ public class ZealgainsPlugin extends Plugin
 			}
 			else
 			{
-				if (nextRedKill > 1)
+				if (nextRedKill > 1 && (nextRedKill != 5 || redIsCalledWinner))
 				{
 					String msg;
 					if (nextRedKill == 5)
@@ -1420,11 +1457,14 @@ public class ZealgainsPlugin extends Plugin
 		{
 			Widget blueKillsW = client.getWidget(375, 11);
 			int nextBlueKill = (blueKillsW != null ? Math.max(0, parseWidgetValue(blueKillsW.getText())) : 0) + 1;
+			// See the mirrored comment in the red branch above — gate kill-5 messaging on the
+			// actual B5 call, not just the live counter, so the non-designated team stays silent.
+			boolean blueIsCalledWinner = blueKills.containsKey(5);
 			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
 			if (nextBlueKill == 5 && !isDumpWindowOpen())
 			{
 				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
-				if (!redEarlyDumpWarned)
+				if (blueIsCalledWinner && !redEarlyDumpWarned)
 				{
 					FriendsChatManager fcm = client.getFriendsChatManager();
 					int timeRemaining = getGameTimeRemaining();
@@ -1439,7 +1479,7 @@ public class ZealgainsPlugin extends Plugin
 			}
 			else
 			{
-				if (nextBlueKill > 1)
+				if (nextBlueKill > 1 && (nextBlueKill != 5 || blueIsCalledWinner))
 				{
 					String msg;
 					if (nextBlueKill == 5)
