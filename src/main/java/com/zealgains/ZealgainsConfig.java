@@ -337,7 +337,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default boolean ruleBreakAlertChat()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
@@ -361,7 +361,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default boolean alertCrossWorld()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
@@ -373,7 +373,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default boolean highlightOnFl()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
@@ -397,7 +397,7 @@ public interface ZealgainsConfig extends Config
 	)
 	default boolean pmCheckerHighlight()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
