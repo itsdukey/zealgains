@@ -90,10 +90,44 @@ public interface ZealgainsConfig extends Config
 	}
 
 	@ConfigItem(
+			keyName = "compactOverlay",
+			name = "Compact Overlay",
+			description = "<html>Packs each Red/Blue call slot onto a single side-by-side line instead of two stacked team lists, "
+					+ "and hides a call row entirely once neither team has claimed that slot.<br><br>"
+					+ "Cuts the overlay's on-screen height significantly — useful on RuneLite's Fixed/Classic client layout where "
+					+ "screen space is tight. Runners are also collapsed onto one combined line.</html>",
+			position = 2,
+			section = generalSection
+	)
+	default boolean compactOverlay()
+	{
+		return false;
+	}
+
+	// Single source of truth for Overlay Size %'s allowed range — referenced by the @Range below
+	// AND by ZealgainsOverlay's drag-to-resize clamp, so the settings-panel slider and Alt-drag
+	// can never disagree about the bounds (interface fields are implicitly public static final).
+	int OVERLAY_FONT_SCALE_MIN = 50;
+	int OVERLAY_FONT_SCALE_MAX = 150;
+
+	@Range(min = OVERLAY_FONT_SCALE_MIN, max = OVERLAY_FONT_SCALE_MAX)
+	@ConfigItem(
+			keyName = "overlayFontScale",
+			name = "Overlay Size %",
+			description = "Scales the size of all overlay text (title, calls, runners, timer, score) at once — the panel border resizes to match. 100 = RuneLite's default overlay font size. You can also Alt-drag the overlay's corner in-game to resize it directly; this value updates to match.",
+			position = 3,
+			section = generalSection
+	)
+	default int overlayFontScale()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
 			keyName = "autoClear",
 			name = "Auto-Clear on Game End",
 			description = "Automatically clear the tracker when the Soul Wars game ends",
-			position = 2,
+			position = 4,
 			section = generalSection
 	)
 	default boolean autoClear()
@@ -105,7 +139,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "showGameSummary",
 			name = "End-of-Game Summary",
 			description = "Print a call and score summary to chat when the game ends (requires Auto-Clear)",
-			position = 3,
+			position = 5,
 			section = generalSection
 	)
 	default boolean showGameSummary()
@@ -117,7 +151,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "showGameStatus",
 			name = "Show Timer & Score",
 			description = "Display the live game timer and current kill score in the overlay and side panel",
-			position = 4,
+			position = 6,
 			section = generalSection
 	)
 	default boolean showGameStatus()
@@ -129,7 +163,7 @@ public interface ZealgainsConfig extends Config
 			keyName = "hideOutsideSoulWars",
 			name = "Hide Overlay Outside Game",
 			description = "Only show the on-screen overlay when inside a Soul Wars game",
-			position = 5,
+			position = 7,
 			section = generalSection
 	)
 	default boolean hideOutsideSoulWars()
@@ -142,7 +176,7 @@ public interface ZealgainsConfig extends Config
 			name = "Dump Alert (Chat)",
 			description = "<html>Shows a team-directed chat message when the avatar is ready to dump (e.g. <b>Red team: Avatar is ready for the 3rd dump</b>).<br><br>"
 					+ "Toggle off to silence in-game chat messages while keeping the RuneLite notification (controlled separately below).</html>",
-			position = 6,
+			position = 8,
 			section = generalSection
 	)
 	default boolean avatarAlertChat()
@@ -156,7 +190,7 @@ public interface ZealgainsConfig extends Config
 			description = "<html>Sends a RuneLite popup or sound notification when it is time to dump.<br><br>"
 					+ "The chat message is controlled separately by <b>Dump Alert (Chat)</b> above.<br><br>"
 					+ "Requires 16+ soul fragments. Kill 1 suppressed. Kill 5 fires only when the dump window opens (5:00, or 4:45 with 40+ in FC).</html>",
-			position = 7,
+			position = 9,
 			section = generalSection
 	)
 	default Notification avatarAlerts()
@@ -169,7 +203,7 @@ public interface ZealgainsConfig extends Config
 			name = "Kill-5 Pre-Warning",
 			description = "<html>Fires a chat warning at <b>5:15</b> and again at <b>5:05</b> when kill 5 is next but the dump window has not opened yet.<br><br>"
 					+ "Winning team sees the exact safe time (<b>Do not dump until 5:00 on the timer</b>). Losing team sees nothing.</html>",
-			position = 8,
+			position = 10,
 			section = generalSection
 	)
 	default boolean showKill5PreWarning()
@@ -182,7 +216,7 @@ public interface ZealgainsConfig extends Config
 			name = "Show Fragment Count",
 			description = "<html>Adds a <b>Frags: ##</b> line to the overlay showing your current soul fragment count during a game.<br><br>"
 					+ "Useful for tracking whether you have the 16-fragment minimum needed for a dump.</html>",
-			position = 9,
+			position = 11,
 			section = generalSection
 	)
 	default boolean showFragCount()
@@ -210,6 +244,16 @@ public interface ZealgainsConfig extends Config
 					+ "<font color='#FFB347'>Enable Fragging Features</font><br>"
 					+ "Master toggle for the frag-calling system. Turn off to hide the call tracker overlay and disable dump-ready alerts and the kill-5 pre-warning. "
 					+ "The Do Not Dump obelisk warning still shows, but Sacrifice is no longer deprioritized.<br><br>"
+					+ "<font color='#FFB347'>Compact Overlay</font><br>"
+					+ "Packs each Red/Blue call slot onto one side-by-side line instead of two stacked team lists, and hides a row entirely once neither team has claimed that slot. "
+					+ "Runners are also collapsed onto a single combined line. Cuts the overlay's height significantly.<br><br>"
+					+ "<font color='#FFB347'>Overlay Size %</font><br>"
+					+ "Scales all overlay text (title, calls, runners, timer, score) at once. 100 is RuneLite's default size — lower it to shrink the overlay further, "
+					+ "or raise it for readability. The overlay's border automatically resizes to fit whatever it's showing at the chosen size, so it always hugs the "
+					+ "text.<br><br>"
+					+ "Prefer to eyeball it? Hold <b>Alt</b> and drag the overlay's corner (RuneLite's own overlay-editing hotkey) to resize it directly — dragging updates "
+					+ "this same percentage to match, so the text and border always stay in sync. Dragging height alone does nothing on its own: height always follows "
+					+ "from the text size, so only a width drag has any effect. Hold <b>Alt</b> and drag the overlay itself (not a corner) to move it on screen instead.<br><br>"
 					+ "<font color='#FFB347'>End-of-Game Summary</font><br>"
 					+ "Prints caller assignments, final score, and time remaining to chat at game end. <b>Requires Auto-Clear to be enabled.</b><br><br>"
 					+ "<font color='#FFB347'>Dump Alert (Chat)</font><br>"
@@ -943,7 +987,7 @@ public interface ZealgainsConfig extends Config
 					+ "• Obelisk is your team's color but the <b>avatar isn't at full HP+strength</b><br><br>"
 					+ "Only shown to players with an active kill call or runner signup — spectators do not see it.<br><br>"
 					+ "Pair with <b>Prevent Dumps When Not Ready</b> to also move Sacrifice off left-click.</html>",
-			position = 9,
+			position = 12,
 			section = generalSection
 	)
 	default boolean highlightObelisk()
@@ -957,7 +1001,7 @@ public interface ZealgainsConfig extends Config
 			description = "<html>Deprioritizes <b>Sacrifice-Fragments</b> on the Soul Obelisk when dumping would be wasted — "
 					+ "making <b>Walk Here</b> the default left-click. Right-click Sacrifice still works.<br><br>"
 					+ "Fires in the same three situations as the obelisk highlight: white obelisk, wrong team color, or avatar not at full HP+strength.</html>",
-			position = 10,
+			position = 13,
 			section = generalSection
 	)
 	default boolean preventOffColorDumps()
@@ -972,7 +1016,7 @@ public interface ZealgainsConfig extends Config
 					+ "including spectators and players with no calls.<br><br>"
 					+ "<b>Smart Filter</b> — only active when you have a kill call or are a registered runner. "
 					+ "Spectators and players with no calls will not see the warning or have their Sacrifice deprioritized.</html>",
-			position = 11,
+			position = 14,
 			section = generalSection
 	)
 	default DumpOverlayFilter dumpOverlayFilter()

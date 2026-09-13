@@ -174,6 +174,16 @@ public class ZealgainsPlugin extends Plugin
 	private final Pattern callTokenPattern = Pattern.compile("(?i)^([rb])((?:\\1?[1-5])+)");
 	private final Pattern runnerPattern = Pattern.compile("(?i)^(?:[>^]([rb])|([rb])[>^])");
 
+	// Words/phrases that disqualify a message's remainder (the text after the leading call token
+	// run — see onChatMessage) from being treated as a real call claim, e.g. "r1 taken by someone
+	// else" describes state rather than claiming the slot. Plain substring match, same as before
+	// this was pulled out of one long OR-chain — just easier to scan and extend.
+	private static final String[] CALL_REMAINDER_BLOCKLIST = {
+			"?", "need", "open", "who", "call", "want", "you", "getting", "go get", "grab",
+			"grabbing", "available", "anyone got", "free", "someone", "anybody", "is there",
+			"can i", "taken", "unclaimed", "uncalled", "please", "pls", "plz", "wasn't", "was not"
+	};
+
 	// Getters for overlay and panel
 	public Map<Integer, String> getRedKills() { return redKills; }
 	public Map<Integer, String> getBlueKills() { return blueKills; }
@@ -786,7 +796,7 @@ public class ZealgainsPlugin extends Plugin
 			remainderBuilder.append(tokens[i]);
 		}
 		String remainder = remainderBuilder.toString();
-		if (remainder.contains("?") || remainder.contains("need") || remainder.contains("open") || remainder.contains("who") || remainder.contains("call") || remainder.contains("want") || remainder.contains("you") || remainder.contains("getting") || remainder.contains("go get") || remainder.contains("grab") || remainder.contains("grabbing") || remainder.contains("available") || remainder.contains("anyone got") || remainder.contains("free") || remainder.contains("someone") || remainder.contains("anybody") || remainder.contains("is there") || remainder.contains("can i") || remainder.contains("taken") || remainder.contains("unclaimed") || remainder.contains("uncalled") || remainder.contains("please") || remainder.contains("pls") || remainder.contains("plz") || remainder.contains("wasn't") || remainder.contains("was not"))
+		if (remainderContainsBlockedWord(remainder))
 		{
 			return;
 		}
@@ -1164,12 +1174,12 @@ public class ZealgainsPlugin extends Plugin
 	// Returns a formatted result string like "R3 R4 — B1 moved to B3" or null if nothing matched.
 	private String applyTargetedReset(String[] args)
 	{
-		java.util.regex.Pattern resetPattern = java.util.regex.Pattern.compile("(?i)^([rb])([1-5]+)$");
+		Pattern resetPattern = Pattern.compile("(?i)^([rb])([1-5]+)$");
 		StringBuilder summary = new StringBuilder();
 		Set<String> affectedTeams = new LinkedHashSet<>();
 		for (String arg : args)
 		{
-			java.util.regex.Matcher m = resetPattern.matcher(arg.trim());
+			Matcher m = resetPattern.matcher(arg.trim());
 			if (!m.matches()) continue;
 			String team = m.group(1).toLowerCase();
 			Map<Integer, String> targetMap = team.equals("r") ? redKills : blueKills;
@@ -1216,6 +1226,16 @@ public class ZealgainsPlugin extends Plugin
 		return maxHealth > 0 && health >= maxHealth && maxStrength > 0 && strength >= maxStrength;
 	}
 
+	// Per-team dump-alert state, read/written by checkTeamDumpAlert() and copied back into the
+	// matching blueXxx/redXxx instance fields by checkAvatarDump() right after each call — see the
+	// comment on checkTeamDumpAlert() for why these are keyed by avatar (blue/red), not by which
+	// team's chat message gets sent.
+	private static final class DumpAlertState
+	{
+		boolean alerted;
+		boolean earlyWarned;
+	}
+
 	private void checkAvatarDump()
 	{
 		Widget blueHealthW   = client.getWidget(375, 15);
@@ -1260,40 +1280,12 @@ public class ZealgainsPlugin extends Plugin
 		else if ("r".equals(localTeam))
 		{
 			boolean blueAvatarReady = isAvatarReady(blueHealth, maxBlueHealth, blueStrength, maxBlueStrength);
-			if (!blueAvatarReady)
-			{
-				obeliskWarnActive = true;
-			}
-			else
-			{
-				// Avatar ready — keep warning if next dump is kill 5 but window not yet open.
-				// If the kill-count widget is unreadable (-1), treat it as "possibly kill 5"
-				// rather than assuming it's safe — a transient glitch must not silently clear
-				// the kill-5 warning right when it matters most.
-				Widget redKillsW = client.getWidget(375, 12);
-				String killText = redKillsW != null ? redKillsW.getText() : null;
-				int redKills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
-				obeliskWarnActive = (redKills == 4 || redKills == -1) && !isDumpWindowOpen();
-			}
+			obeliskWarnActive = isObeliskWarnPending(blueAvatarReady, 12);
 		}
 		else
 		{
 			boolean redAvatarReady = isAvatarReady(redHealth, maxRedHealth, redStrength, maxRedStrength);
-			if (!redAvatarReady)
-			{
-				obeliskWarnActive = true;
-			}
-			else
-			{
-				// Avatar ready — keep warning if next dump is kill 5 but window not yet open.
-				// If the kill-count widget is unreadable (-1), treat it as "possibly kill 5"
-				// rather than assuming it's safe — a transient glitch must not silently clear
-				// the kill-5 warning right when it matters most.
-				Widget blueKillsW = client.getWidget(375, 11);
-				String killText = blueKillsW != null ? blueKillsW.getText() : null;
-				int blueKills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
-				obeliskWarnActive = (blueKills == 4 || blueKills == -1) && !isDumpWindowOpen();
-			}
+			obeliskWarnActive = isObeliskWarnPending(redAvatarReady, 11);
 		}
 
 		// Players in the game without a specific kill call should never dump, even when the
@@ -1394,50 +1386,97 @@ public class ZealgainsPlugin extends Plugin
 
 		// Blue avatar at full → Red team should dump
 		boolean blueReady = isAvatarReady(blueHealth, maxBlueHealth, blueStrength, maxBlueStrength);
-		if (config.enableFragging() && blueReady && !blueAvatarDumpAlerted && showBlueAlert && hasEnoughFragments)
+		DumpAlertState blueSide = new DumpAlertState();
+		blueSide.alerted = blueAvatarDumpAlerted;
+		blueSide.earlyWarned = blueEarlyDumpWarned;
+		checkTeamDumpAlert("Red", blueReady, blueHealth, blueStrength, showBlueAlert, hasEnoughFragments,
+				12, redKills, blueSide);
+		blueAvatarDumpAlerted = blueSide.alerted;
+		blueEarlyDumpWarned = blueSide.earlyWarned;
+
+		// Red avatar at full → Blue team should dump
+		boolean redReady = isAvatarReady(redHealth, maxRedHealth, redStrength, maxRedStrength);
+		DumpAlertState redSide = new DumpAlertState();
+		redSide.alerted = redAvatarDumpAlerted;
+		redSide.earlyWarned = redEarlyDumpWarned;
+		checkTeamDumpAlert("Blue", redReady, redHealth, redStrength, showRedAlert, hasEnoughFragments,
+				11, blueKills, redSide);
+		redAvatarDumpAlerted = redSide.alerted;
+		redEarlyDumpWarned = redSide.earlyWarned;
+	}
+
+	// Once the enemy avatar reaches full HP+Strength, the obelisk warning normally clears —
+	// except when this team's own next dump is kill 5 and the dump window hasn't opened yet
+	// (5:00, or 4:45 with 40+ in the FC): the warning must stay on past full HP in that case, or
+	// players would dump the winning kill too early. ownKillsWidgetChildId is THIS team's own
+	// kill counter (375/12 for red, 375/11 for blue) — checking readiness plus this team's own
+	// progress is what decides whether kill 5 is genuinely next. Kill-count unreadable (-1) is
+	// treated as "possibly 4" rather than risking a false-clear right when it matters most.
+	private boolean isObeliskWarnPending(boolean enemyAvatarReady, int ownKillsWidgetChildId)
+	{
+		if (!enemyAvatarReady) return true;
+		Widget killsW = client.getWidget(375, ownKillsWidgetChildId);
+		String killText = killsW != null ? killsW.getText() : null;
+		int kills = killText != null ? Math.max(0, parseWidgetValue(killText)) : -1;
+		return (kills == 4 || kills == -1) && !isDumpWindowOpen();
+	}
+
+	// Shared logic for "this avatar just reached full HP+Strength → the OTHER team should dump" —
+	// called once per avatar from checkAvatarDump() with the roles swapped. teamLabel/killsWidgetChildId
+	// /ownKillsMap all belong to the team being ALERTED (e.g. "Red"/widget 12/redKills when the
+	// BLUE avatar — passed as avatarReady/enemyHealth/enemyStrength — is the one that's ready),
+	// since that team's own banked kill count and R5/B5 call are what decide which numbered dump
+	// this is for them. state is read/written in place; the caller copies it back into the
+	// matching blueXxx/redXxx fields (named after the avatar, not the alerted team — see
+	// DumpAlertState) immediately after calling.
+	private void checkTeamDumpAlert(String teamLabel, boolean avatarReady, int enemyHealth, int enemyStrength,
+			boolean showAlert, boolean hasEnoughFragments, int killsWidgetChildId,
+			Map<Integer, String> ownKillsMap, DumpAlertState state)
+	{
+		if (config.enableFragging() && avatarReady && !state.alerted && showAlert && hasEnoughFragments)
 		{
-			Widget redKillsW = client.getWidget(375, 12);
-			int nextRedKill = (redKillsW != null ? Math.max(0, parseWidgetValue(redKillsW.getText())) : 0) + 1;
+			Widget killsW = client.getWidget(375, killsWidgetChildId);
+			int nextKill = (killsW != null ? Math.max(0, parseWidgetValue(killsW.getText())) : 0) + 1;
 			// Both teams' live kill counters can legitimately sit at 4 at the same time (they're
 			// tallied independently) — the R5/B5 call is what actually designates which team is
 			// meant to land the winning kill. Kill 5 messaging must therefore respect that call,
 			// not just the live counter, or the non-designated team gets told to dump too.
-			boolean redIsCalledWinner = redKills.containsKey(5);
+			boolean isCalledWinner = ownKillsMap.containsKey(5);
 			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
-			if (nextRedKill == 5 && !isDumpWindowOpen())
+			if (nextKill == 5 && !isDumpWindowOpen())
 			{
 				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
-				if (redIsCalledWinner && !blueEarlyDumpWarned)
+				if (isCalledWinner && !state.earlyWarned)
 				{
 					FriendsChatManager fcm = client.getFriendsChatManager();
 					int timeRemaining = getGameTimeRemaining();
 					if (fcm != null && fcm.getCount() >= 40 && timeRemaining != -1 && timeRemaining <= 305)
 					{
-						String warn = "Red team: 40+ people in FC — do NOT dump at 5:00! Wait until 4:45.";
+						String warn = teamLabel + " team: 40+ people in FC — do NOT dump at 5:00! Wait until 4:45.";
 						if (config.avatarAlertChat()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + warn + "</col>", null);
 						notifier.notify(config.avatarAlerts(), warn);
-						blueEarlyDumpWarned = true;
+						state.earlyWarned = true;
 					}
 				}
 			}
 			else
 			{
-				if (nextRedKill > 1 && (nextRedKill != 5 || redIsCalledWinner))
+				if (nextKill > 1 && (nextKill != 5 || isCalledWinner))
 				{
 					String msg;
-					if (nextRedKill == 5)
+					if (nextKill == 5)
 					{
 						FriendsChatManager fcm = client.getFriendsChatManager();
 						String timeStr = (fcm != null && fcm.getCount() >= 40) ? "4:45" : "5:00";
-						msg = "Red team: Dump the winning kill at " + timeStr + "!";
+						msg = teamLabel + " team: Dump the winning kill at " + timeStr + "!";
 					}
 					else
 					{
-						msg = "Red team: Avatar is ready for the " + ordinal(nextRedKill) + " dump";
+						msg = teamLabel + " team: Avatar is ready for the " + ordinal(nextKill) + " dump";
 					}
 					if (config.avatarAlertChat()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + msg + "</col>", null);
 					notifier.notify(config.avatarAlerts(), msg);
-					blueAvatarDumpAlerted = true;
+					state.alerted = true;
 				}
 			}
 		}
@@ -1445,65 +1484,10 @@ public class ZealgainsPlugin extends Plugin
 		// invalid widget read (-1, e.g. a one-tick UI hiccup) must not re-arm the alert, or it
 		// would fire a duplicate "avatar ready to dump" message once the reading recovers even
 		// though the avatar never actually left full HP.
-		else if (blueHealth >= 0 && blueStrength >= 0 && !blueReady)
+		else if (enemyHealth >= 0 && enemyStrength >= 0 && !avatarReady)
 		{
-			blueAvatarDumpAlerted = false;
-			blueEarlyDumpWarned = false;
-		}
-
-		// Red avatar at full → Blue team should dump
-		boolean redReady = isAvatarReady(redHealth, maxRedHealth, redStrength, maxRedStrength);
-		if (config.enableFragging() && redReady && !redAvatarDumpAlerted && showRedAlert && hasEnoughFragments)
-		{
-			Widget blueKillsW = client.getWidget(375, 11);
-			int nextBlueKill = (blueKillsW != null ? Math.max(0, parseWidgetValue(blueKillsW.getText())) : 0) + 1;
-			// See the mirrored comment in the red branch above — gate kill-5 messaging on the
-			// actual B5 call, not just the live counter, so the non-designated team stays silent.
-			boolean blueIsCalledWinner = blueKills.containsKey(5);
-			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
-			if (nextBlueKill == 5 && !isDumpWindowOpen())
-			{
-				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
-				if (blueIsCalledWinner && !redEarlyDumpWarned)
-				{
-					FriendsChatManager fcm = client.getFriendsChatManager();
-					int timeRemaining = getGameTimeRemaining();
-					if (fcm != null && fcm.getCount() >= 40 && timeRemaining != -1 && timeRemaining <= 305)
-					{
-						String warn = "Blue team: 40+ people in FC — do NOT dump at 5:00! Wait until 4:45.";
-						if (config.avatarAlertChat()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + warn + "</col>", null);
-						notifier.notify(config.avatarAlerts(), warn);
-						redEarlyDumpWarned = true;
-					}
-				}
-			}
-			else
-			{
-				if (nextBlueKill > 1 && (nextBlueKill != 5 || blueIsCalledWinner))
-				{
-					String msg;
-					if (nextBlueKill == 5)
-					{
-						FriendsChatManager fcm = client.getFriendsChatManager();
-						String timeStr = (fcm != null && fcm.getCount() >= 40) ? "4:45" : "5:00";
-						msg = "Blue team: Dump the winning kill at " + timeStr + "!";
-					}
-					else
-					{
-						msg = "Blue team: Avatar is ready for the " + ordinal(nextBlueKill) + " dump";
-					}
-					if (config.avatarAlertChat()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + msg + "</col>", null);
-					notifier.notify(config.avatarAlerts(), msg);
-					redAvatarDumpAlerted = true;
-				}
-			}
-		}
-		// Same rationale as the blue branch above — only a confirmed reading below full
-		// HP/strength should re-arm the alert, not a transient invalid (-1) widget read.
-		else if (redHealth >= 0 && redStrength >= 0 && !redReady)
-		{
-			redAvatarDumpAlerted = false;
-			redEarlyDumpWarned = false;
+			state.alerted = false;
+			state.earlyWarned = false;
 		}
 	}
 
@@ -1669,6 +1653,16 @@ public class ZealgainsPlugin extends Plugin
 		for (String player : redKills.values())  if (Text.standardize(player).equals(std)) return "r";
 		for (String player : blueKills.values()) if (Text.standardize(player).equals(std)) return "b";
 		return null;
+	}
+
+	// See CALL_REMAINDER_BLOCKLIST for the word list and why it's checked at all.
+	private boolean remainderContainsBlockedWord(String remainder)
+	{
+		for (String word : CALL_REMAINDER_BLOCKLIST)
+		{
+			if (remainder.contains(word)) return true;
+		}
+		return false;
 	}
 
 	private String cleanOsrsName(String input)
