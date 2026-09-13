@@ -54,6 +54,14 @@ Runners are displayed in the overlay below the call lists and cleared on game re
 
 ---
 
+## Compact Overlay
+
+Enable **Compact Overlay** (General Settings) to shrink the on-screen call tracker — useful on RuneLite's Fixed/Classic client layout where screen space is tight. Each slot's Red and Blue call share one line (e.g. `R1 PlayerName` on the left, `B1 PlayerName` on the right) instead of two stacked team lists, and a row is skipped entirely once neither team has claimed that slot. Runners collapse onto a single `Runners: Name (R), Name (B)` line. Off by default.
+
+Right below it, **Overlay Size %** (General Settings) scales all overlay text — title, calls, runners, timer, score — at once. 100% is RuneLite's default size; lower it to shrink the overlay further, or raise it for readability. The overlay's border automatically resizes to fit whatever it's showing at the chosen size, so it always hugs the text instead of leaving empty space or wrapping.
+
+---
+
 ## Avatar Dump Alerts
 
 The plugin reads the avatar health and strength widgets every game tick:
@@ -188,7 +196,7 @@ Sections appear top-to-bottom in this order in the config panel:
 |---------|----------|
 | **Rules Guide** | Call rules, dumping rules, and how to frag. |
 | **Valid Callouts** | Valid call formats, invalid examples, flagged-word list, and frag runner callouts. |
-| **General Settings** | Enable Fragging Features (master toggle), display mode, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility |
+| **General Settings** | Enable Fragging Features (master toggle), display mode, compact overlay, overlay size, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility |
 | **General Settings Guide** | Descriptions of every General Settings option |
 | **Color Options** | Per-element color pickers and global opacity slider for alerts, overlay, and summaries |
 | **ZG Ranks Settings** | Rule break alerts, cross-world detection, FL/PM highlights, ban list, left-click add/remove on FC members — for ZG Star Ranks only |
