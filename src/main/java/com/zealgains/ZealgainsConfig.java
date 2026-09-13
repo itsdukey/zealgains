@@ -104,11 +104,17 @@ public interface ZealgainsConfig extends Config
 		return false;
 	}
 
-	@Range(min = 50, max = 150)
+	// Single source of truth for Overlay Size %'s allowed range — referenced by the @Range below
+	// AND by ZealgainsOverlay's drag-to-resize clamp, so the settings-panel slider and Alt-drag
+	// can never disagree about the bounds (interface fields are implicitly public static final).
+	int OVERLAY_FONT_SCALE_MIN = 50;
+	int OVERLAY_FONT_SCALE_MAX = 150;
+
+	@Range(min = OVERLAY_FONT_SCALE_MIN, max = OVERLAY_FONT_SCALE_MAX)
 	@ConfigItem(
 			keyName = "overlayFontScale",
 			name = "Overlay Size %",
-			description = "Scales the size of all overlay text (title, calls, runners, timer, score) at once — the panel border resizes to match. 100 = RuneLite's default overlay font size.",
+			description = "Scales the size of all overlay text (title, calls, runners, timer, score) at once — the panel border resizes to match. 100 = RuneLite's default overlay font size. You can also Alt-drag the overlay's corner in-game to resize it directly; this value updates to match.",
 			position = 3,
 			section = generalSection
 	)
@@ -244,8 +250,10 @@ public interface ZealgainsConfig extends Config
 					+ "<font color='#FFB347'>Overlay Size %</font><br>"
 					+ "Scales all overlay text (title, calls, runners, timer, score) at once. 100 is RuneLite's default size — lower it to shrink the overlay further, "
 					+ "or raise it for readability. The overlay's border automatically resizes to fit whatever it's showing at the chosen size, so it always hugs the "
-					+ "text with no manual resizing needed. Want to move it on screen instead? Hold <b>Alt</b> and drag — that's RuneLite's own overlay-editing "
-					+ "hotkey, not something this plugin adds.<br><br>"
+					+ "text.<br><br>"
+					+ "Prefer to eyeball it? Hold <b>Alt</b> and drag the overlay's corner (RuneLite's own overlay-editing hotkey) to resize it directly — dragging updates "
+					+ "this same percentage to match, so the text and border always stay in sync. Dragging height alone does nothing on its own: height always follows "
+					+ "from the text size, so only a width drag has any effect. Hold <b>Alt</b> and drag the overlay itself (not a corner) to move it on screen instead.<br><br>"
 					+ "<font color='#FFB347'>End-of-Game Summary</font><br>"
 					+ "Prints caller assignments, final score, and time remaining to chat at game end. <b>Requires Auto-Clear to be enabled.</b><br><br>"
 					+ "<font color='#FFB347'>Dump Alert (Chat)</font><br>"

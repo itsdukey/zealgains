@@ -1,5 +1,6 @@
 package com.zealgains;
 
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.LineComponent;
@@ -15,11 +16,21 @@ public class ZealgainsOverlay extends OverlayPanel
     // Added on top of the widest line's raw measured text width when sizing the panel each
     // frame: covers PanelComponent's own 4px-per-side border and leaves a little visual gap
     // between a line's left and right text (e.g. Compact Overlay's Red/Blue columns) instead of
-    // them touching edge-to-edge.
+    // them touching edge-to-edge. Fixed in pixels — does NOT scale with font size, which the
+    // drag-to-resize ratio math in render() has to account for explicitly (see there).
     private static final int CONTENT_PADDING = 24;
+
+    // How often an in-progress Alt-drag is allowed to write to the config store. Every render()
+    // frame where the dragged width differs from last frame would otherwise call
+    // configManager.setConfiguration() dozens of times a second while the user drags — each call
+    // synchronously posts a ConfigChanged event to every plugin's subscribers, which can visibly
+    // stutter the client. The live-scale preview below still updates every frame regardless (so
+    // dragging still feels instant); only the persisted config write is throttled.
+    private static final long CONFIG_WRITE_THROTTLE_MS = 150;
 
     private final ZealgainsPlugin plugin;
     private final ZealgainsConfig config;
+    private final ConfigManager configManager;
 
     // Widest line measured so far this frame (left + right text width, at the current — possibly
     // Overlay Font Size %-scaled — font). Reset at the top of render() and used at the end to
@@ -27,20 +38,28 @@ public class ZealgainsOverlay extends OverlayPanel
     // and whatever content is actually showing, instead of sitting at a fixed default width.
     private int widestContent;
 
+    // The exact pixel width panelComponent was set to at the end of the previous frame — i.e.
+    // what RuneLite's Alt-drag resize handles were actually showing on screen just now. Comparing
+    // this against the Overlay-level preferredSize at the top of the next render() call is how a
+    // live drag is told apart from a stale/no-op value (see the render() comment below).
+    private int lastAppliedWidth = 0;
+
+    // The font scale currently being previewed mid-drag, before (or between) config writes; -1
+    // means no drag is in progress and config.overlayFontScale() is authoritative. Needed because
+    // config writes are throttled (see CONFIG_WRITE_THROTTLE_MS) but rendering still has to track
+    // the drag every single frame, and because each new frame's ratio must be computed against
+    // the scale actually being previewed, not a stale config value from before the drag started.
+    private int liveFontScale = -1;
+    private long lastConfigWriteMs = 0;
+
     @Inject
-    private ZealgainsOverlay(ZealgainsPlugin plugin, ZealgainsConfig config)
+    private ZealgainsOverlay(ZealgainsPlugin plugin, ZealgainsConfig config, ConfigManager configManager)
     {
         super(plugin);
         this.plugin = plugin;
         this.config = config;
+        this.configManager = configManager;
         setPosition(OverlayPosition.TOP_LEFT);
-        // OverlayPanel defaults every overlay to user-resizable (RuneLite's own Alt-drag corner
-        // handles), which persists a separate Overlay-level preferredSize that OverlayPanel.render()
-        // force-copies onto panelComponent every frame, silently undoing whatever width we compute
-        // below. Since the panel now auto-fits its own content, manual resizing would only fight
-        // that — turned off here, and also actively cleared in render() in case a size was already
-        // stored from before this was disabled (that stale value keeps reapplying otherwise).
-        setResizable(false);
     }
 
     private Color tint(Color c)
@@ -72,13 +91,72 @@ public class ZealgainsOverlay extends OverlayPanel
                 || config.displayMode() == ZealgainsConfig.DisplayMode.NONE) return null;
         if (config.hideOutsideSoulWars() && !plugin.isInSoulWarsGame()) return null;
 
+        // Drag-to-resize: RuneLite's Alt-drag overlay-editing hotkey resizes this overlay by
+        // writing to a separate Overlay-level preferredSize field (distinct from panelComponent's
+        // own — see getPreferredSize()/setPreferredSize() here, both inherited from Overlay, not
+        // the panelComponent.setPreferredSize() calls elsewhere in this file). Left alone, that
+        // field would fight the content-fit sizing below every frame. Instead of ignoring it (or
+        // letting it override us), a change in it is treated as "the user just dragged to width
+        // X" and converted into an equivalent Overlay Size % — scaled proportionally from
+        // whatever width this panel last rendered at — so a drag simply re-derives the config
+        // slider instead of pinning a fixed pixel size that would immediately conflict with the
+        // auto-fit logic on the very next frame. Only width matters here: this overlay's height
+        // is always a pure function of line count and font size (PanelComponent hands every child
+        // a forced height of 0 regardless of preferredSize.height — confirmed by decompiling the
+        // client jar), so a vertical-only drag has nothing to attach to and is a no-op by design,
+        // not a bug — the font (and therefore height) only ever changes via the width ratio below.
+        Dimension dragged = getPreferredSize();
+        if (dragged != null)
+        {
+            // CONTENT_PADDING is a fixed pixel amount that doesn't grow or shrink with the font,
+            // so it has to be subtracted out before ratio-ing the two widths — otherwise a short
+            // line of text (where the padding is a large share of the total box width) would be
+            // scaled by noticeably less than the drag actually asked for. What should scale
+            // 1:1 with font size is the TEXT width alone (lastAppliedWidth/dragged.width minus
+            // the padding), not the padded box width.
+            int textWidthOld = lastAppliedWidth - CONTENT_PADDING;
+            if (lastAppliedWidth > 0 && dragged.width != lastAppliedWidth && textWidthOld > 0)
+            {
+                int textWidthNew = Math.max(1, dragged.width - CONTENT_PADDING);
+                int baseScale = liveFontScale > 0 ? liveFontScale : config.overlayFontScale();
+                double ratio = (double) textWidthNew / textWidthOld;
+                int newScale = (int) Math.round(baseScale * ratio);
+                newScale = Math.max(ZealgainsConfig.OVERLAY_FONT_SCALE_MIN,
+                        Math.min(ZealgainsConfig.OVERLAY_FONT_SCALE_MAX, newScale));
+                // Preview every frame regardless of the throttle below, so dragging still feels
+                // instant; ratios on subsequent frames are computed against this live value
+                // rather than a config value that may not have been written yet.
+                liveFontScale = newScale;
+
+                long now = System.currentTimeMillis();
+                if (now - lastConfigWriteMs >= CONFIG_WRITE_THROTTLE_MS)
+                {
+                    configManager.setConfiguration("zealgains", "overlayFontScale", newScale);
+                    lastConfigWriteMs = now;
+                }
+            }
+            // Consumed — clear it so OverlayPanel.render() (invoked via super.render() below)
+            // never force-copies it back onto panelComponent, undoing the fit we compute below.
+            setPreferredSize(null);
+        }
+        else if (liveFontScale > 0)
+        {
+            // The Overlay-level field is null again — one frame after the last real drag
+            // movement, since we always clear it ourselves and RuneLite only re-sets it while a
+            // drag is actually happening. Make sure the final previewed value gets persisted even
+            // if it fell inside the last throttle window, then hand control back to the config
+            // value for subsequent frames (e.g. if the user edits the slider directly instead).
+            configManager.setConfiguration("zealgains", "overlayFontScale", liveFontScale);
+            liveFontScale = -1;
+        }
+
         // Overlay Font Size % scales whatever font RuneLite already has active on this
         // Graphics2D rather than assuming a fixed base point size — this respects the user's
         // own RuneLite font/DPI settings instead of fighting them. Title/LineComponent both fall
         // back to graphics.getFont() when no explicit font is set on them (never done here), so
         // setting it once up front covers the title, every call/runner line, and — since this
         // runs before the FontMetrics measurement below — the panel's own dynamic width.
-        int fontScale = config.overlayFontScale();
+        int fontScale = liveFontScale > 0 ? liveFontScale : config.overlayFontScale();
         if (fontScale != 100)
         {
             Font base = graphics.getFont();
@@ -174,12 +252,8 @@ public class ZealgainsOverlay extends OverlayPanel
         // Size the panel to exactly fit this frame's content at the current font — the border
         // shrinks and grows with both Overlay Font Size % and whichever lines are actually
         // showing, instead of sitting at RuneLite's fixed default width regardless of content.
-        panelComponent.setPreferredSize(new Dimension(widestContent + CONTENT_PADDING, 0));
-
-        // Clear any stored resizable-overlay size (see the constructor comment) so
-        // OverlayPanel.render() — called via super.render() below — never overwrites the width
-        // we just computed with a stale persisted value.
-        setPreferredSize(null);
+        lastAppliedWidth = widestContent + CONTENT_PADDING;
+        panelComponent.setPreferredSize(new Dimension(lastAppliedWidth, 0));
 
         return super.render(graphics);
     }

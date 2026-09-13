@@ -54,11 +54,13 @@ Runners are displayed in the overlay below the call lists and cleared on game re
 
 ---
 
-## Compact Overlay
+## Compact Overlay & Sizing
 
 Enable **Compact Overlay** (General Settings) to shrink the on-screen call tracker — useful on RuneLite's Fixed/Classic client layout where screen space is tight. Each slot's Red and Blue call share one line (e.g. `R1 PlayerName` on the left, `B1 PlayerName` on the right) instead of two stacked team lists, and a row is skipped entirely once neither team has claimed that slot. Runners collapse onto a single `Runners: Name (R), Name (B)` line. Off by default.
 
 Right below it, **Overlay Size %** (General Settings) scales all overlay text — title, calls, runners, timer, score — at once. 100% is RuneLite's default size; lower it to shrink the overlay further, or raise it for readability. The overlay's border automatically resizes to fit whatever it's showing at the chosen size, so it always hugs the text instead of leaving empty space or wrapping.
+
+Prefer to eyeball it instead of using the slider? Hold **Alt** and drag the overlay's corner (RuneLite's own overlay-editing hotkey) to resize it directly — dragging updates Overlay Size % to match, so the text and border stay in sync at any size. Dragging height alone has no effect on its own, since the panel's height is always a direct result of the text size, not something set independently — only a width drag does anything.
 
 ---
 
