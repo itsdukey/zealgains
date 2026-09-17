@@ -150,17 +150,35 @@ public class ZealgainsOverlay extends OverlayPanel
             liveFontScale = -1;
         }
 
+        // Fractional metrics off so inter-character spacing lands on integer pixel boundaries —
+        // without this, deriveFont() below producing a fractional point size at any non-100%
+        // Overlay Size % combines with fractional metrics to double-stroke glyph outlines at
+        // sub-pixel offsets (confirmed in-game as a doubled/ghosted look). Antialiasing is left
+        // on (not forced off): this font (runescape_small.ttf, confirmed by inspecting the file
+        // directly) has no fpgm hinting program at all and only a single, size-independent gasp
+        // range, so there's no per-size grid-fitting available from the font itself — with
+        // antialiasing off, a thin multi-stroke letter like "m" can have stems under a pixel wide
+        // randomly vanish or merge (illegible, confirmed in-game), which plain antialiasing avoids
+        // at the cost of a softer edge. GASP was tried and reverted: since this font's one gasp
+        // range spans every size with only the antialias flag set, it behaves identically to
+        // plain AA_ON here and added nothing.
+        graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
+
         // Overlay Font Size % scales whatever font RuneLite already has active on this
         // Graphics2D rather than assuming a fixed base point size — this respects the user's
         // own RuneLite font/DPI settings instead of fighting them. Title/LineComponent both fall
         // back to graphics.getFont() when no explicit font is set on them (never done here), so
         // setting it once up front covers the title, every call/runner line, and — since this
-        // runs before the FontMetrics measurement below — the panel's own dynamic width.
+        // runs before the FontMetrics measurement below — the panel's own dynamic width. Rounded
+        // to the nearest whole point rather than left fractional, so the rasterized size lands
+        // on the pixel grid instead of between two sizes.
         int fontScale = liveFontScale > 0 ? liveFontScale : config.overlayFontScale();
         if (fontScale != 100)
         {
             Font base = graphics.getFont();
-            graphics.setFont(base.deriveFont(base.getSize2D() * fontScale / 100f));
+            float scaledSize = Math.round(base.getSize2D() * fontScale / 100f);
+            graphics.setFont(base.deriveFont(scaledSize));
         }
 
         FontMetrics fm = graphics.getFontMetrics();
