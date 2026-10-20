@@ -17,6 +17,7 @@ public class ZealgainsObeliskOverlay extends Overlay
     private static final Color WARN_FILL   = new Color(255, 0, 0, 60);
     private static final Color WARN_BORDER = Color.RED;
     private static final Font  WARN_FONT   = new Font("Arial", Font.BOLD, 14);
+    private static final Font  TIMER_FONT  = new Font("Arial", Font.BOLD, 16);
 
     // World-coordinate bounding box of the Soul Obelisk tile square (SW 2205,2910 → NE 2208,2913).
     // Used as an absolute position lock so the polygon can never render anywhere else on the map.
@@ -42,9 +43,12 @@ public class ZealgainsObeliskOverlay extends Overlay
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        if (!config.highlightObelisk() || !plugin.isObeliskWarnActive()) return null;
-        if (config.dumpOverlayFilter() == ZealgainsConfig.DumpOverlayFilter.SMART_FILTER
-                && !config.alwaysShowDumpOverlay() && !plugin.isLocalPlayerInGame()) return null;
+        boolean showWarn = config.highlightObelisk() && plugin.isObeliskWarnActive()
+                && !(config.dumpOverlayFilter() == ZealgainsConfig.DumpOverlayFilter.SMART_FILTER
+                        && !config.alwaysShowDumpOverlay() && !plugin.isLocalPlayerInGame());
+        // Respawn timer has its own visibility rules (team + call gate) — see getVisibleRespawnSeconds()
+        int respawnSeconds = plugin.getVisibleRespawnSeconds();
+        if (!showWarn && respawnSeconds < 0) return null;
 
         GameObject obelisk = plugin.getTrackedObelisk();
         if (obelisk == null) return null;
@@ -88,23 +92,44 @@ public class ZealgainsObeliskOverlay extends Overlay
                     || Math.abs(poly.ypoints[i] - tileCenter.getY()) > 200) return null;
         }
 
-        // Red fill + border
-        graphics.setColor(WARN_FILL);
-        graphics.fillPolygon(poly);
-        graphics.setStroke(new BasicStroke(2));
-        graphics.setColor(WARN_BORDER);
-        graphics.drawPolygon(poly);
+        int centerX = (int) poly.getBounds().getCenterX();
+        int centerY = (int) poly.getBounds().getCenterY();
 
-        // "DO NOT DUMP" text centered over the obelisk, with black shadow for readability
-        String text = "DO NOT DUMP";
-        graphics.setFont(WARN_FONT);
-        FontMetrics fm = graphics.getFontMetrics();
-        int x = (int) poly.getBounds().getCenterX() - fm.stringWidth(text) / 2;
-        int y = (int) poly.getBounds().getCenterY() + fm.getAscent() / 2;
-        graphics.setColor(Color.BLACK);
-        graphics.drawString(text, x + 1, y + 1);
-        graphics.setColor(Color.RED);
-        graphics.drawString(text, x, y);
+        if (showWarn)
+        {
+            // Red fill + border
+            graphics.setColor(WARN_FILL);
+            graphics.fillPolygon(poly);
+            graphics.setStroke(new BasicStroke(2));
+            graphics.setColor(WARN_BORDER);
+            graphics.drawPolygon(poly);
+
+            // "DO NOT DUMP" text centered over the obelisk, with black shadow for readability
+            String text = "DO NOT DUMP";
+            graphics.setFont(WARN_FONT);
+            FontMetrics fm = graphics.getFontMetrics();
+            int x = centerX - fm.stringWidth(text) / 2;
+            int y = centerY + fm.getAscent() / 2;
+            graphics.setColor(Color.BLACK);
+            graphics.drawString(text, x + 1, y + 1);
+            graphics.setColor(Color.RED);
+            graphics.drawString(text, x, y);
+        }
+
+        if (respawnSeconds >= 0)
+        {
+            // Respawn countdown — centered over the obelisk on its own, or one line above
+            // "DO NOT DUMP" when the warning is also showing so the two never overlap
+            String text = "Respawn: " + respawnSeconds + "s";
+            graphics.setFont(TIMER_FONT);
+            FontMetrics fm = graphics.getFontMetrics();
+            int x = centerX - fm.stringWidth(text) / 2;
+            int y = showWarn ? centerY - fm.getAscent() : centerY + fm.getAscent() / 2;
+            graphics.setColor(Color.BLACK);
+            graphics.drawString(text, x + 1, y + 1);
+            graphics.setColor(config.avatarRespawnTimerColor());
+            graphics.drawString(text, x, y);
+        }
 
         return null;
     }

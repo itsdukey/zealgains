@@ -146,10 +146,25 @@ public class ZealgainsPlugin extends Plugin
 	private boolean blueEarlyDumpWarned = false, redEarlyDumpWarned = false;
 	private boolean kill5PreWarnedEarly = false, kill5PreWarnedLate = false;
 
+	// Avatar respawn timer — an avatar respawns 20s after it dies. Death is detected from its HP
+	// widget reading 0 or unreadable (it reads -1 while despawned) for 2 consecutive ticks, which filters
+	// out one-tick widget hiccups; the start time is backdated by the 1 extra tick of debounce.
+	// Only armed once a valid HP reading has been seen this game, so the widgets being unreadable
+	// before the game UI loads never looks like a death. Cleared by the "has returned!" message
+	// or by a valid HP reading coming back.
+	private static final long AVATAR_RESPAWN_MS = 20_000L;
+	// Stop showing a timer that never got cleared (e.g. missed the return message) after this long
+	private static final long AVATAR_RESPAWN_STALE_MS = AVATAR_RESPAWN_MS + 10_000L;
+	private boolean blueAvatarSeenAlive = false, redAvatarSeenAlive = false;
+	private int blueAvatarMissingTicks = 0, redAvatarMissingTicks = 0;
+	private long blueAvatarDeathMillis = -1, redAvatarDeathMillis = -1;
+
 	// End-of-game summary tracking
 	private int lastGameRedScore = 0;
 	private int lastGameBlueScore = 0;
 	private int lastKnownGameSeconds = -1;
+	// Timer value from the previous in-game tick, used by checkTimeAlerts() to detect the countdown crossing a target
+	private int prevTimeAlertSeconds = -1;
 
 	// Lobby size — tracked live from widget 434.6, frozen when lobby timer hits 0
 	private int lobbyPlayerCount = 0;
@@ -195,6 +210,24 @@ public class ZealgainsPlugin extends Plugin
 	public GameObject getTrackedObelisk() { return trackedObelisk; }
 	public int getLobbyPlayerCount() { return lobbyPlayerCount; }
 	public int getFragCount() { return getFragmentCount(); }
+
+	// Seconds until the avatar the local player's team kills respawns (blue team → red avatar,
+	// red team → blue avatar), or -1 when the timer shouldn't be shown. Only shown to players with
+	// an active kill/runner call, unless the Always Show Respawn Timer dev option is on.
+	public int getVisibleRespawnSeconds()
+	{
+		if (!config.enableFragging() || !config.showAvatarRespawnTimer()) return -1;
+		String localTeam = getLocalTeam();
+		if (localTeam == null) return -1;
+		if (!hasLocalCall() && !config.alwaysShowRespawnTimer()) return -1;
+
+		long deathMillis = "b".equals(localTeam) ? redAvatarDeathMillis : blueAvatarDeathMillis;
+		if (deathMillis < 0) return -1;
+		long elapsed = System.currentTimeMillis() - deathMillis;
+		if (elapsed > AVATAR_RESPAWN_STALE_MS) return -1;
+		long remainingMs = Math.max(0, AVATAR_RESPAWN_MS - elapsed);
+		return (int) ((remainingMs + 999) / 1000);
+	}
 
 	public boolean hasLocalCall()
 	{
@@ -490,6 +523,8 @@ public class ZealgainsPlugin extends Plugin
 		if (panel != null)
 			panel.updateGameStatus(config.showGameStatus() ? seconds : -1, lastGameRedScore, lastGameBlueScore);
 
+		checkTimeAlerts(seconds);
+
 		if (trackedObelisk == null)
 		{
 			scanForObelisk();
@@ -671,6 +706,13 @@ public class ZealgainsPlugin extends Plugin
 		// Auto-reset on game end — print summary first
 		if (event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM)
 		{
+			// Avatar back — stop its respawn timer (Creation = blue avatar, Destruction = red avatar)
+			if (message.contains("has returned"))
+			{
+				if (message.contains("avatar of creation")) blueAvatarDeathMillis = -1;
+				else if (message.contains("avatar of destruction")) redAvatarDeathMillis = -1;
+			}
+
 			if (message.contains("the game has ended") || message.contains("zeal token")
 					|| (message.contains("you received") && message.contains("zeal")))
 			{
@@ -924,6 +966,11 @@ public class ZealgainsPlugin extends Plugin
 					"  Red avatar: HP " + redHealth + "/" + maxRedHealth
 							+ ", Str " + redStrength + "/" + maxRedStrength
 							+ ", ready=" + redAvatarReady, null);
+			long nowMs = System.currentTimeMillis();
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Respawn timers: Blue " + (blueAvatarDeathMillis < 0 ? "alive" : (nowMs - blueAvatarDeathMillis) / 1000 + "s since death")
+							+ ", Red " + (redAvatarDeathMillis < 0 ? "alive" : (nowMs - redAvatarDeathMillis) / 1000 + "s since death")
+							+ ", shown=" + getVisibleRespawnSeconds(), null);
 
 			Widget redKillsW  = client.getWidget(375, 12);
 			Widget blueKillsW = client.getWidget(375, 11);
@@ -1139,8 +1186,12 @@ public class ZealgainsPlugin extends Plugin
 		blueAvatarDumpAlerted = false; redAvatarDumpAlerted = false;
 		blueEarlyDumpWarned = false; redEarlyDumpWarned = false;
 		kill5PreWarnedEarly = false; kill5PreWarnedLate = false;
+		blueAvatarSeenAlive = false; redAvatarSeenAlive = false;
+		blueAvatarMissingTicks = 0; redAvatarMissingTicks = 0;
+		blueAvatarDeathMillis = -1; redAvatarDeathMillis = -1;
 		trackedObelisk = null; obeliskWarnActive = false;
 		lastGameRedScore = 0; lastGameBlueScore = 0; lastKnownGameSeconds = -1;
+		prevTimeAlertSeconds = -1;
 		lobbyPlayerCount = 0; lobbyCountSet = false; prevLobbyTimerSeconds = -1;
 
 		if (panel != null)
@@ -1202,6 +1253,32 @@ public class ZealgainsPlugin extends Plugin
 		return reshuffleMsg.length() > 0 ? result + " — " + reshuffleMsg : result;
 	}
 
+	// Fires an "Alert at Time" for every configured time the countdown crossed since the last tick.
+	// Crossing-based (previous tick above target, this tick at/below it) rather than "<= target", so a
+	// mid-game plugin load or a new game starting never fires stale alerts for times already passed.
+	private void checkTimeAlerts(int seconds)
+	{
+		int prev = prevTimeAlertSeconds;
+		prevTimeAlertSeconds = seconds;
+		if (prev == -1 || seconds >= prev) return;
+
+		String raw = config.timeAlerts();
+		if (raw == null || raw.trim().isEmpty()) return;
+
+		for (String entry : raw.split(","))
+		{
+			// Require M:SS — parseLobbyTimer() also accepts bare seconds, so "1250" would silently mean 20:50
+			if (!entry.contains(":")) continue;
+			int target = parseLobbyTimer(entry.trim());
+			if (target < 0 || prev <= target || seconds > target) continue;
+
+			String timeStr = String.format("%d:%02d", target / 60, target % 60);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"<col=" + colorToHex(config.timeAlertColor()) + ">Zealgains: Timer alert — " + timeStr + " left</col>", null);
+			notifier.notify(config.timeAlertNotification(), "Soul Wars timer: " + timeStr + " left");
+		}
+	}
+
 	private void sendAlert(String message)
 	{
 		if (config.ruleBreakAlertChat())
@@ -1257,6 +1334,29 @@ public class ZealgainsPlugin extends Plugin
 		if (blueStrength > maxBlueStrength) maxBlueStrength = blueStrength;
 		if (redHealth > maxRedHealth)       maxRedHealth    = redHealth;
 		if (redStrength > maxRedStrength)   maxRedStrength  = redStrength;
+
+		// Avatar respawn timer tracking — see the field comment for the detection rules
+		long now = System.currentTimeMillis();
+		if (blueHealth > 0)
+		{
+			blueAvatarSeenAlive = true;
+			blueAvatarMissingTicks = 0;
+			blueAvatarDeathMillis = -1;
+		}
+		else if (blueAvatarSeenAlive && ++blueAvatarMissingTicks == 2 && blueAvatarDeathMillis < 0)
+		{
+			blueAvatarDeathMillis = now - 600;
+		}
+		if (redHealth > 0)
+		{
+			redAvatarSeenAlive = true;
+			redAvatarMissingTicks = 0;
+			redAvatarDeathMillis = -1;
+		}
+		else if (redAvatarSeenAlive && ++redAvatarMissingTicks == 2 && redAvatarDeathMillis < 0)
+		{
+			redAvatarDeathMillis = now - 600;
+		}
 
 		// Derive local team — varbit 3815 is authoritative; falls back to call history
 		String localTeam = getLocalTeam();
@@ -1343,13 +1443,7 @@ public class ZealgainsPlugin extends Plugin
 							|| (blueHasWin && blueKillCount == 4);
 					if (killCountReady)
 					{
-						int pwPlayerCount = lobbyPlayerCount;
-						if (pwPlayerCount < 40)
-						{
-							FriendsChatManager pwFcm = client.getFriendsChatManager();
-							if (pwFcm != null) pwPlayerCount = Math.max(pwPlayerCount, pwFcm.getCount());
-						}
-						String killTimeStr = pwPlayerCount >= 40 ? "4:45" : "5:00";
+						String killTimeStr = getEffectivePlayerCount() >= 40 ? "4:45" : "5:00";
 
 						boolean localIsWinner = (redHasWin && "r".equals(localTeam))
 								|| (blueHasWin && "b".equals(localTeam));
@@ -1445,14 +1539,13 @@ public class ZealgainsPlugin extends Plugin
 			// Kill 5 is gated behind the dump window (5:00 / 4:45) — keep checking until it opens
 			if (nextKill == 5 && !isDumpWindowOpen())
 			{
-				// If 40+ people, warn at 5:05 not to dump at 5:00 — must wait until 4:45
+				// If 40+ players, warn at 5:05 not to dump at 5:00 — must wait until 4:45
 				if (isCalledWinner && !state.earlyWarned)
 				{
-					FriendsChatManager fcm = client.getFriendsChatManager();
 					int timeRemaining = getGameTimeRemaining();
-					if (fcm != null && fcm.getCount() >= 40 && timeRemaining != -1 && timeRemaining <= 305)
+					if (getEffectivePlayerCount() >= 40 && timeRemaining != -1 && timeRemaining <= 305)
 					{
-						String warn = teamLabel + " team: 40+ people in FC — do NOT dump at 5:00! Wait until 4:45.";
+						String warn = teamLabel + " team: 40+ players — do NOT dump at 5:00! Wait until 4:45.";
 						if (config.avatarAlertChat()) client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=" + colorToHex(config.avatarAlertColor()) + ">Zealgains: " + warn + "</col>", null);
 						notifier.notify(config.avatarAlerts(), warn);
 						state.earlyWarned = true;
@@ -1466,8 +1559,7 @@ public class ZealgainsPlugin extends Plugin
 					String msg;
 					if (nextKill == 5)
 					{
-						FriendsChatManager fcm = client.getFriendsChatManager();
-						String timeStr = (fcm != null && fcm.getCount() >= 40) ? "4:45" : "5:00";
+						String timeStr = getEffectivePlayerCount() >= 40 ? "4:45" : "5:00";
 						msg = teamLabel + " team: Dump the winning kill at " + timeStr + "!";
 					}
 					else
@@ -1552,15 +1644,18 @@ public class ZealgainsPlugin extends Plugin
 	{
 		int timeRemaining = getGameTimeRemaining();
 		if (timeRemaining == -1) return false;
-		// lobbyPlayerCount (Players: ## field, frozen at game start) is the most reliable
-		// player count; fall back to live FC member count if the lobby wasn't captured.
-		int playerCount = lobbyPlayerCount;
-		if (playerCount < 40)
-		{
-			FriendsChatManager fcm = client.getFriendsChatManager();
-			if (fcm != null) playerCount = Math.max(playerCount, fcm.getCount());
-		}
-		return timeRemaining <= (playerCount >= 40 ? 285 : 300);
+		return timeRemaining <= (getEffectivePlayerCount() >= 40 ? 285 : 300);
+	}
+
+	// Player count for the 40+ dump-timing rules. lobbyPlayerCount (Players: ## field, frozen
+	// at game start) is authoritative once captured; only fall back to the live FC member count
+	// if the lobby was never captured. The FC roster online is routinely 40+ even in sub-40
+	// games, so it must never override a captured lobby count.
+	private int getEffectivePlayerCount()
+	{
+		if (lobbyCountSet) return lobbyPlayerCount;
+		FriendsChatManager fcm = client.getFriendsChatManager();
+		return fcm != null ? fcm.getCount() : lobbyPlayerCount;
 	}
 
 	private int parseWidgetValue(String text)
