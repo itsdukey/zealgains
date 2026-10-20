@@ -33,6 +33,14 @@ public interface ZealgainsConfig extends Config
 		SMART_FILTER
 	}
 
+	enum OverlayFont
+	{
+		DEFAULT,
+		SMALL,
+		REGULAR,
+		BOLD
+	}
+
 	// ─────────────────────────────────────────────
 	// TOP-LEVEL NOTICE (no section — appears above all sections)
 	// ─────────────────────────────────────────────
@@ -104,23 +112,18 @@ public interface ZealgainsConfig extends Config
 		return false;
 	}
 
-	// Single source of truth for Overlay Size %'s allowed range — referenced by the @Range below
-	// AND by ZealgainsOverlay's drag-to-resize clamp, so the settings-panel slider and Alt-drag
-	// can never disagree about the bounds (interface fields are implicitly public static final).
-	int OVERLAY_FONT_SCALE_MIN = 50;
-	int OVERLAY_FONT_SCALE_MAX = 150;
-
-	@Range(min = OVERLAY_FONT_SCALE_MIN, max = OVERLAY_FONT_SCALE_MAX)
 	@ConfigItem(
-			keyName = "overlayFontScale",
-			name = "Overlay Size %",
-			description = "Scales the size of all overlay text (title, calls, runners, timer, score) at once — the panel border resizes to match. 100 = RuneLite's default overlay font size. You can also Alt-drag the overlay's corner in-game to resize it directly; this value updates to match.",
+			keyName = "overlayFont",
+			name = "Overlay Font",
+			description = "<html>Font used for the call tracker overlay. <b>Small</b> makes the overlay noticeably smaller; "
+					+ "<b>Default</b> follows RuneLite's own overlay font setting.<br><br>"
+					+ "The panel border always resizes to fit the text.</html>",
 			position = 3,
 			section = generalSection
 	)
-	default int overlayFontScale()
+	default OverlayFont overlayFont()
 	{
-		return 100;
+		return OverlayFont.DEFAULT;
 	}
 
 	@ConfigItem(
@@ -189,7 +192,7 @@ public interface ZealgainsConfig extends Config
 			name = "Dump Alert (Notification)",
 			description = "<html>Sends a RuneLite popup or sound notification when it is time to dump.<br><br>"
 					+ "The chat message is controlled separately by <b>Dump Alert (Chat)</b> above.<br><br>"
-					+ "Requires 16+ soul fragments. Kill 1 suppressed. Kill 5 fires only when the dump window opens (5:00, or 4:45 with 40+ in FC).</html>",
+					+ "Requires 16+ soul fragments. Kill 1 suppressed. Kill 5 fires only when the dump window opens (5:00, or 4:45 with 40+ players in the game).</html>",
 			position = 9,
 			section = generalSection
 	)
@@ -247,13 +250,9 @@ public interface ZealgainsConfig extends Config
 					+ "<font color='#FFB347'>Compact Overlay</font><br>"
 					+ "Packs each Red/Blue call slot onto one side-by-side line instead of two stacked team lists, and hides a row entirely once neither team has claimed that slot. "
 					+ "Runners are also collapsed onto a single combined line. Cuts the overlay's height significantly.<br><br>"
-					+ "<font color='#FFB347'>Overlay Size %</font><br>"
-					+ "Scales all overlay text (title, calls, runners, timer, score) at once. 100 is RuneLite's default size — lower it to shrink the overlay further, "
-					+ "or raise it for readability. The overlay's border automatically resizes to fit whatever it's showing at the chosen size, so it always hugs the "
-					+ "text.<br><br>"
-					+ "Prefer to eyeball it? Hold <b>Alt</b> and drag the overlay's corner (RuneLite's own overlay-editing hotkey) to resize it directly — dragging updates "
-					+ "this same percentage to match, so the text and border always stay in sync. Dragging height alone does nothing on its own: height always follows "
-					+ "from the text size, so only a width drag has any effect. Hold <b>Alt</b> and drag the overlay itself (not a corner) to move it on screen instead.<br><br>"
+					+ "<font color='#FFB347'>Overlay Font</font><br>"
+					+ "Picks the overlay's font from RuneLite's built-in fonts. <b>Small</b> shrinks the overlay further; <b>Default</b> follows RuneLite's own "
+					+ "overlay font setting. The border automatically resizes to fit the text. Hold <b>Alt</b> and drag the overlay to move it on screen.<br><br>"
 					+ "<font color='#FFB347'>End-of-Game Summary</font><br>"
 					+ "Prints caller assignments, final score, and time remaining to chat at game end. <b>Requires Auto-Clear to be enabled.</b><br><br>"
 					+ "<font color='#FFB347'>Dump Alert (Chat)</font><br>"
@@ -261,7 +260,7 @@ public interface ZealgainsConfig extends Config
 					+ "Toggle off to silence in-game chat while keeping the RuneLite notification below.<br><br>"
 					+ "<font color='#FFB347'>Dump Alert (Notification)</font><br>"
 					+ "Sends a RuneLite popup or sound when it is time to dump. The chat message is controlled separately above. "
-					+ "Requires 16+ soul fragments. Kill 1 suppressed. Kill 5 fires only when the dump window opens (5:00, or 4:45 with 40+ in FC).<br><br>"
+					+ "Requires 16+ soul fragments. Kill 1 suppressed. Kill 5 fires only when the dump window opens (5:00, or 4:45 with 40+ players in the game).<br><br>"
 					+ "<font color='#FFB347'>Kill-5 Pre-Warning</font><br>"
 					+ "Fires a chat warning at 5:15 and again at 5:05 when kill 5 is next but the dump window has not opened yet. "
 					+ "Winning team sees the safe dump time. Losing team sees nothing.<br><br>"
@@ -276,6 +275,13 @@ public interface ZealgainsConfig extends Config
 					+ "<b>Always</b> — warning applies to everyone, including spectators and players with no calls.<br>"
 					+ "<b>Smart Filter</b> — only applies when the plugin can detect you are actively playing (varbit, cape, or call history). "
 					+ "Spectators will not see the warning or have Sacrifice deprioritized.<br><br>"
+					+ "<font color='#FFB347'>Avatar Respawn Timer</font><br>"
+					+ "Shows a countdown over the Soul Obelisk until the avatar your team is fragging respawns (20s after it dies). "
+					+ "You only see your own team's target avatar, and only while you have a kill call or runner signup.<br><br>"
+					+ "<font color='#FFB347'>Alert at Time</font><br>"
+					+ "Type a time like <b>12:50</b> and you get a chat alert when the in-game timer (time left) reaches it. "
+					+ "Separate multiple times with commas (<b>12:50, 5:30</b>). Leave empty to turn off. "
+					+ "A RuneLite popup or sound can be added with <b>Alert at Time (Notification)</b>.<br><br>"
 					+ "</font></body></html>",
 			description = "",
 			position = 0,
@@ -316,7 +322,7 @@ public interface ZealgainsConfig extends Config
 					+ "b1 &nbsp;b2 &nbsp;b3 &nbsp;b4 &nbsp;b5*<br><br>"
 					+ "<font color='#FFB347'>Multiple</font> — r12, r1r2, r123, r1r2r3 (compact or spaced)<br><br>"
 					+ "<font color='#A0A0A0'>*b5 only valid after 12:00, only if R5 is unclaimed.</font><br><br>"
-					+ "<font color='#A0A0A0'>Anything you add after your call (e.g. <b>r1 ty</b>) is fine, as long as it doesn't contain a word the plugin treats as a red flag — see the Rules Guide's Invalid Examples for the full list.</font><br><br>"
+					+ "<font color='#A0A0A0'>Anything you add after your call (e.g. <b>r1 ty</b>) is fine, as long as it doesn't contain a word the plugin treats as a red flag — see Valid Callouts → Invalid examples for the full list.</font><br><br>"
 					+ "</font>"
 					+ "<font color='#87CEEB'><b>── Runners ──</b></font><br><br>"
 					+ "<font color='#A0A0A0'>"
@@ -597,7 +603,7 @@ public interface ZealgainsConfig extends Config
 					+ "<b>Do not</b> overdump — dumping the same kill as another fragger wastes it.<br><br>"
 					+ "<b>Do not dump more kills than you called.</b><br><br>"
 					+ "<b>Do not</b> dump the winning kill before <b>5:00</b> remaining.<br>"
-					+ "With <b>40+ people</b> in FC, wait until <b>4:45</b> instead.<br><br>"
+					+ "With <b>40+ players</b> in the game, wait until <b>4:45</b> instead.<br><br>"
 					+ "</font>"
 					+ "<font color='#87CEEB'><b>── How to Frag ──</b></font><br>"
 					+ "<font color='#A0A0A0'>"
@@ -937,6 +943,32 @@ public interface ZealgainsConfig extends Config
 		return 100;
 	}
 
+	@Alpha
+	@ConfigItem(
+			keyName = "avatarRespawnTimerColor",
+			name = "Avatar Respawn Timer",
+			description = "Color of the avatar respawn countdown shown over the Soul Obelisk",
+			position = 17,
+			section = alertColorsSection
+	)
+	default Color avatarRespawnTimerColor()
+	{
+		return new Color(0x00, 0xFF, 0xFF, 0xFF);
+	}
+
+	@Alpha
+	@ConfigItem(
+			keyName = "timeAlertColor",
+			name = "Alert at Time",
+			description = "Color of the Alert at Time chat message",
+			position = 18,
+			section = alertColorsSection
+	)
+	default Color timeAlertColor()
+	{
+		return new Color(0xFF, 0xFF, 0x00, 0xFF);
+	}
+
 	// ─────────────────────────────────────────────
 	// DEVELOPER OPTIONS
 	// ─────────────────────────────────────────────
@@ -981,11 +1013,12 @@ public interface ZealgainsConfig extends Config
 			keyName = "highlightObelisk",
 			name = "Do Not Dump Warning",
 			description = "<html><b>Smart obelisk warning</b> — highlights the Soul Obelisk in red and shows <b>DO NOT DUMP</b> over it when dumping would be wasted.<br><br>"
-					+ "Triggers automatically in three situations:<br>"
+					+ "Triggers automatically in four situations:<br>"
 					+ "• Obelisk is <b>white</b> (uncontrolled) — fragments go nowhere<br>"
 					+ "• Obelisk is the <b>wrong color</b> for your team<br>"
-					+ "• Obelisk is your team's color but the <b>avatar isn't at full HP+strength</b><br><br>"
-					+ "Only shown to players with an active kill call or runner signup — spectators do not see it.<br><br>"
+					+ "• Obelisk is your team's color but the <b>avatar isn't at full HP+strength</b><br>"
+					+ "• You are <b>in the game without a specific kill call</b><br><br>"
+					+ "Who sees it is controlled by <b>Dump Warning Visibility</b>.<br><br>"
 					+ "Pair with <b>Prevent Dumps When Not Ready</b> to also move Sacrifice off left-click.</html>",
 			position = 12,
 			section = generalSection
@@ -1000,7 +1033,7 @@ public interface ZealgainsConfig extends Config
 			name = "Prevent Dumps When Not Ready",
 			description = "<html>Deprioritizes <b>Sacrifice-Fragments</b> on the Soul Obelisk when dumping would be wasted — "
 					+ "making <b>Walk Here</b> the default left-click. Right-click Sacrifice still works.<br><br>"
-					+ "Fires in the same three situations as the obelisk highlight: white obelisk, wrong team color, or avatar not at full HP+strength.</html>",
+					+ "Fires in the same four situations as the <b>Do Not Dump Warning</b>.</html>",
 			position = 13,
 			section = generalSection
 	)
@@ -1014,8 +1047,8 @@ public interface ZealgainsConfig extends Config
 			name = "Dump Warning Visibility",
 			description = "<html><b>Always</b> (default) — the DO NOT DUMP overlay and dump prevention apply to everyone in the game, "
 					+ "including spectators and players with no calls.<br><br>"
-					+ "<b>Smart Filter</b> — only active when you have a kill call or are a registered runner. "
-					+ "Spectators and players with no calls will not see the warning or have their Sacrifice deprioritized.</html>",
+					+ "<b>Smart Filter</b> — only active when the plugin can detect you are actively playing (Soul Wars team, cape, or call history). "
+					+ "Spectators will not see the warning or have their Sacrifice deprioritized.</html>",
 			position = 14,
 			section = generalSection
 	)
@@ -1025,9 +1058,50 @@ public interface ZealgainsConfig extends Config
 	}
 
 	@ConfigItem(
+			keyName = "showAvatarRespawnTimer",
+			name = "Avatar Respawn Timer",
+			description = "<html>Shows a countdown over the Soul Obelisk until the avatar your team is fragging respawns "
+					+ "(<b>20s</b> after it dies). Blue team only sees the Red avatar's timer, Red team only sees the Blue avatar's.<br><br>"
+					+ "Only shown to players with an active kill call or runner signup.<br><br>"
+					+ "Color is configurable under <b>Color Options → Avatar Respawn Timer</b>.</html>",
+			position = 15,
+			section = generalSection
+	)
+	default boolean showAvatarRespawnTimer()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "timeAlerts",
+			name = "Alert at Time",
+			description = "<html>Sends a chat alert when the in-game timer (time left) reaches the time(s) you enter, e.g. <b>12:50</b>.<br><br>"
+					+ "Separate multiple times with commas: <b>12:50, 5:30</b>. Leave empty to turn off.<br><br>"
+					+ "Notification is controlled separately by <b>Alert at Time (Notification)</b> below.</html>",
+			position = 16,
+			section = generalSection
+	)
+	default String timeAlerts()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+			keyName = "timeAlertNotification",
+			name = "Alert at Time (Notification)",
+			description = "<html>Sends a RuneLite popup or sound notification when an <b>Alert at Time</b> fires.</html>",
+			position = 17,
+			section = generalSection
+	)
+	default Notification timeAlertNotification()
+	{
+		return Notification.OFF;
+	}
+
+	@ConfigItem(
 			keyName = "dumpAlertMode",
 			name = "Dump Alert Team Filter",
-			description = "<html><b>Auto</b> (default) — only alerts for the avatar your team should dump, derived from your own call history.<br><br>"
+			description = "<html><b>Auto</b> (default) — only alerts for the avatar your team should dump, based on your detected team.<br><br>"
 					+ "<b>All</b> — alerts fire for both avatars regardless of which team you are on. "
 					+ "Enable only if you need to monitor both avatars at once — you'll be asked to confirm.</html>",
 			position = 2,
@@ -1041,9 +1115,8 @@ public interface ZealgainsConfig extends Config
 	@ConfigItem(
 			keyName = "alwaysShowDumpOverlay",
 			name = "Always Show Dump Overlay",
-			description = "<html>When <b>on</b>, the <b>DO NOT DUMP</b> obelisk overlay shows even if you have no active calls or runner signup.<br><br>"
-					+ "By default the overlay is hidden unless you have a kill call or are a registered runner, "
-					+ "so spectators do not see it. Enable this to show it regardless.</html>",
+			description = "<html>When <b>on</b>, the <b>DO NOT DUMP</b> obelisk overlay and dump prevention apply even while "
+					+ "<b>Dump Warning Visibility</b> is set to <b>Smart Filter</b> and the plugin can't detect you are playing.</html>",
 			position = 3,
 			section = devSection
 	)
@@ -1057,11 +1130,24 @@ public interface ZealgainsConfig extends Config
 			name = "Show Lobby Player Count",
 			description = "<html>Shows the number of players in the lobby on the overlay.<br><br>"
 					+ "Updates live while waiting for a game to start, then freezes at the game-start count for the duration of the game.<br><br>"
-					+ "Color is configurable under <b>Color Options → Overlay Lobby Count</b>.</html>",
+					+ "Color is configurable under <b>Color Options → Overlay Players Count</b>.</html>",
 			position = 4,
 			section = devSection
 	)
 	default boolean showLobbyCount()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			keyName = "alwaysShowRespawnTimer",
+			name = "Always Show Respawn Timer",
+			description = "<html>When <b>on</b>, the <b>Avatar Respawn Timer</b> over the obelisk shows even if you have no active kill call or runner signup.<br><br>"
+					+ "Still only shows the timer for your own team's target avatar, and still requires <b>Avatar Respawn Timer</b> to be on.</html>",
+			position = 5,
+			section = devSection
+	)
+	default boolean alwaysShowRespawnTimer()
 	{
 		return false;
 	}

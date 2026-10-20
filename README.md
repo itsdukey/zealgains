@@ -58,9 +58,7 @@ Runners are displayed in the overlay below the call lists and cleared on game re
 
 Enable **Compact Overlay** (General Settings) to shrink the on-screen call tracker — useful on RuneLite's Fixed/Classic client layout where screen space is tight. Each slot's Red and Blue call share one line (e.g. `R1 PlayerName` on the left, `B1 PlayerName` on the right) instead of two stacked team lists, and a row is skipped entirely once neither team has claimed that slot. Runners collapse onto a single `Runners: Name (R), Name (B)` line. Off by default.
 
-Right below it, **Overlay Size %** (General Settings) scales all overlay text — title, calls, runners, timer, score — at once. 100% is RuneLite's default size; lower it to shrink the overlay further, or raise it for readability. The overlay's border automatically resizes to fit whatever it's showing at the chosen size, so it always hugs the text instead of leaving empty space or wrapping.
-
-Prefer to eyeball it instead of using the slider? Hold **Alt** and drag the overlay's corner (RuneLite's own overlay-editing hotkey) to resize it directly — dragging updates Overlay Size % to match, so the text and border stay in sync at any size. Dragging height alone has no effect on its own, since the panel's height is always a direct result of the text size, not something set independently — only a width drag does anything.
+Right below it, **Overlay Font** (General Settings) picks the overlay's font from RuneLite's built-in fonts — **Small** shrinks the overlay further, **Regular**/**Bold** for readability, and **Default** follows RuneLite's own overlay font setting. The overlay's border automatically resizes to fit whatever it's showing, so it always hugs the text instead of leaving empty space or wrapping.
 
 ---
 
@@ -75,8 +73,8 @@ When both health and strength are at their observed maximum, an alert fires in g
 
 - **Dumps 2–4** — Alert fires immediately when the avatar is ready.
 - **Dump 1** — Suppressed (fires at game start, not useful).
-- **Dump 5** — Gated behind the dump window: ≤5:00 remaining (or ≤4:45 with 40+ FC members). Retries every tick until both conditions are met.
-- **Early warning** — When 40+ FC members are present, a warning fires at 5:05 reminding players not to dump at 5:00 and to wait for 4:45.
+- **Dump 5** — Gated behind the dump window: ≤5:00 remaining (or ≤4:45 with 40+ players in the game). Retries every tick until both conditions are met.
+- **Early warning** — When 40+ players are in the game, a warning fires at 5:05 reminding players not to dump at 5:00 and to wait for 4:45.
 
 Avatar alerts are filtered by your team — you only see alerts for the enemy avatar. Team is detected with a three-tier fallback: varbit 3815 (set automatically when you join a Soul Wars team), your equipped Soul Wars cape if the varbit isn't set, and your own call history as a last resort.
 
@@ -100,6 +98,18 @@ The plugin highlights the Soul Obelisk in **red** with **DO NOT DUMP** text and 
 By default (**Dump Warning Visibility: Always**, General Settings), the overlay and Sacrifice deprioritization apply to everyone, including spectators. Switching that setting to **Smart Filter** hides both from anyone the plugin can't confirm is actively playing (via varbit, Soul Wars cape, or call history). **Always Show Dump Overlay** (Developer Options) is a dev override that forces it back on for everyone even while Smart Filter is selected — useful for testing.
 
 **Prevent Dumps When Not Ready** (General Settings) deprioritizes the Sacrifice-Fragments left-click option on the obelisk, making Walk Here the default, in the same four situations as the highlight above. Right-clicking still lets you Sacrifice normally.
+
+---
+
+## Avatar Respawn Timer
+
+When the avatar your team is fragging dies, a **Respawn: Ns** countdown appears over the Soul Obelisk until it respawns (20 seconds). Blue players see the Red avatar's timer and Red players see the Blue avatar's. It only shows while you have a kill call or runner signup, and sits just above the **DO NOT DUMP** text when both are showing. Toggle under **General Settings → Avatar Respawn Timer**; the color is under **Color Options**.
+
+---
+
+## Alert at Time
+
+Enter one or more times in **General Settings → Alert at Time** (e.g. `12:50`, or `12:50, 5:30` for several) and a chat message fires when the in-game timer counts down to each one. Times must use the `M:SS` format. Leave the field empty to turn it off. A RuneLite popup or sound can be added with **Alert at Time (Notification)**, and the chat color is under **Color Options**.
 
 ---
 
@@ -164,7 +174,7 @@ The plugin tracks the majority world of the Friends Chat. Calls from players on 
 | Command | Description |
 |---------|-------------|
 | `::zgsync` | Force-refreshes the ban list (5-minute cooldown; rank-only) |
-| `::zgteam` | Debug — prints team detection state to chat: varbit value, cached team, call-history team, resolved team, obelisk warn status |
+| `::zgteam` | Debug — prints team detection state to chat: varbit value, cached team, call-history team, resolved team, obelisk warn status, avatar respawn timers |
 
 ### Rank Broadcast (Captain+ only)
 
@@ -198,7 +208,7 @@ Sections appear top-to-bottom in this order in the config panel:
 |---------|----------|
 | **Rules Guide** | Call rules, dumping rules, and how to frag. |
 | **Valid Callouts** | Valid call formats, invalid examples, flagged-word list, and frag runner callouts. |
-| **General Settings** | Enable Fragging Features (master toggle), display mode, compact overlay, overlay size, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility |
+| **General Settings** | Enable Fragging Features (master toggle), display mode, compact overlay, overlay font, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility, avatar respawn timer, alert at time |
 | **General Settings Guide** | Descriptions of every General Settings option |
 | **Color Options** | Per-element color pickers and global opacity slider for alerts, overlay, and summaries |
 | **ZG Ranks Settings** | Rule break alerts, cross-world detection, FL/PM highlights, ban list, left-click add/remove on FC members — for ZG Star Ranks only |
