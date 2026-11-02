@@ -113,6 +113,12 @@ Enter one or more times in **General Settings → Alert at Time** (e.g. `12:50`,
 
 ---
 
+## Activity Warning
+
+Turn on **General Settings → Enable Activity Warning** and a chat message fires when your Soul Wars activity bar drops to **Activity Warning %** (default 20%), so you can do something before you are kicked for inactivity. A RuneLite popup or sound can be added with **Activity Warning (Notification)**, and **Activity Warning (Flash Screen)** flashes the game screen — even while RuneLite is focused. Pick a 2-second flash or **until interaction**, which keeps flashing until you move the mouse or press a key. The chat and flash colors are under **Color Options**.
+
+---
+
 ## Disconnect Alerts
 
 If a player who holds active calls leaves the Friends Chat, an alert prints listing their held calls. Fires once per player per game.
@@ -208,7 +214,7 @@ Sections appear top-to-bottom in this order in the config panel:
 |---------|----------|
 | **Rules Guide** | Call rules, dumping rules, and how to frag. |
 | **Valid Callouts** | Valid call formats, invalid examples, flagged-word list, and frag runner callouts. |
-| **General Settings** | Enable Fragging Features (master toggle), display mode, compact overlay, overlay font, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility, avatar respawn timer, alert at time |
+| **General Settings** | Enable Fragging Features (master toggle), display mode, compact overlay, overlay font, auto-clear, end-of-game summary, timer/score, hide outside game, dump alerts, kill-5 pre-warning, frag count, obelisk highlight, prevent dumps, dump warning visibility, avatar respawn timer, alert at time, activity warning |
 | **General Settings Guide** | Descriptions of every General Settings option |
 | **Color Options** | Per-element color pickers and global opacity slider for alerts, overlay, and summaries |
 | **ZG Ranks Settings** | Rule break alerts, cross-world detection, FL/PM highlights, ban list, left-click add/remove on FC members — for ZG Star Ranks only |

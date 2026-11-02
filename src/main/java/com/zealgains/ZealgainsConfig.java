@@ -5,6 +5,7 @@ import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.FlashNotification;
 import net.runelite.client.config.Notification;
 import net.runelite.client.config.Range;
 
@@ -39,6 +40,32 @@ public interface ZealgainsConfig extends Config
 		SMALL,
 		REGULAR,
 		BOLD
+	}
+
+	// Own copy of RuneLite's FlashNotification so the "until cancelled" options can be relabelled.
+	// Constant names match FlashNotification's so the mapping below is one-to-one.
+	enum ActivityFlash
+	{
+		DISABLED("Disabled", FlashNotification.DISABLED),
+		FLASH_TWO_SECONDS("Flash for 2 seconds", FlashNotification.FLASH_TWO_SECONDS),
+		SOLID_TWO_SECONDS("Solid for 2 seconds", FlashNotification.SOLID_TWO_SECONDS),
+		FLASH_UNTIL_CANCELLED("Flash until interaction", FlashNotification.FLASH_UNTIL_CANCELLED),
+		SOLID_UNTIL_CANCELLED("Solid until interaction", FlashNotification.SOLID_UNTIL_CANCELLED);
+
+		private final String label;
+		final FlashNotification flash;
+
+		ActivityFlash(String label, FlashNotification flash)
+		{
+			this.label = label;
+			this.flash = flash;
+		}
+
+		@Override
+		public String toString()
+		{
+			return label;
+		}
 	}
 
 	// ─────────────────────────────────────────────
@@ -282,6 +309,10 @@ public interface ZealgainsConfig extends Config
 					+ "Type a time like <b>12:50</b> and you get a chat alert when the in-game timer (time left) reaches it. "
 					+ "Separate multiple times with commas (<b>12:50, 5:30</b>). Leave empty to turn off. "
 					+ "A RuneLite popup or sound can be added with <b>Alert at Time (Notification)</b>.<br><br>"
+					+ "<font color='#FFB347'>Activity Warning</font><br>"
+					+ "Turn on <b>Enable Activity Warning</b> and you get a chat alert when your activity bar drops to <b>Activity Warning %</b> (default 20%), "
+					+ "before you are kicked for inactivity. Add a RuneLite popup or sound with <b>Activity Warning (Notification)</b>, and pick how the screen flashes with "
+					+ "<b>Activity Warning (Flash Screen)</b> — <b>Until interaction</b> keeps flashing until you move the mouse or press a key.<br><br>"
 					+ "</font></body></html>",
 			description = "",
 			position = 0,
@@ -969,6 +1000,32 @@ public interface ZealgainsConfig extends Config
 		return new Color(0xFF, 0xFF, 0x00, 0xFF);
 	}
 
+	@Alpha
+	@ConfigItem(
+			keyName = "activityWarningColor",
+			name = "Activity Warning",
+			description = "Color of the Activity Warning chat message",
+			position = 19,
+			section = alertColorsSection
+	)
+	default Color activityWarningColor()
+	{
+		return new Color(0xFF, 0xFF, 0x00, 0xFF);
+	}
+
+	@Alpha
+	@ConfigItem(
+			keyName = "activityWarningFlashColor",
+			name = "Activity Warning Flash",
+			description = "Color of the screen flash when the Activity Warning fires — lower the opacity to make it more see-through",
+			position = 20,
+			section = alertColorsSection
+	)
+	default Color activityWarningFlashColor()
+	{
+		return new Color(0xFF, 0x00, 0x00, 0x46);
+	}
+
 	// ─────────────────────────────────────────────
 	// DEVELOPER OPTIONS
 	// ─────────────────────────────────────────────
@@ -1096,6 +1153,59 @@ public interface ZealgainsConfig extends Config
 	default Notification timeAlertNotification()
 	{
 		return Notification.OFF;
+	}
+
+	@ConfigItem(
+			keyName = "activityWarning",
+			name = "Enable Activity Warning",
+			description = "<html>Sends a chat alert when your Soul Wars activity bar drops to the <b>Activity Warning %</b> below, "
+					+ "so you can do something before you are kicked for inactivity.<br><br>"
+					+ "Notification and screen flash are controlled separately below.</html>",
+			position = 18,
+			section = generalSection
+	)
+	default boolean activityWarning()
+	{
+		return false;
+	}
+
+	@Range(min = 1, max = 100)
+	@ConfigItem(
+			keyName = "activityWarningThreshold",
+			name = "Activity Warning %",
+			description = "<html>The activity bar percent at which the <b>Activity Warning</b> fires.</html>",
+			position = 19,
+			section = generalSection
+	)
+	default int activityWarningThreshold()
+	{
+		return 20;
+	}
+
+	@ConfigItem(
+			keyName = "activityWarningNotification",
+			name = "Activity Warning (Notification)",
+			description = "<html>Sends a RuneLite popup or sound notification when the <b>Activity Warning</b> fires.</html>",
+			position = 20,
+			section = generalSection
+	)
+	default Notification activityWarningNotification()
+	{
+		return Notification.OFF;
+	}
+
+	@ConfigItem(
+			keyName = "activityWarningFlash",
+			name = "Activity Warning (Flash Screen)",
+			description = "<html>Flashes the game screen when the <b>Activity Warning</b> fires — works even while RuneLite is focused.<br><br>"
+					+ "<b>Until interaction</b> keeps flashing until you move the mouse or press a key.<br><br>"
+					+ "Flash color is configurable under <b>Color Options → Activity Warning Flash</b>.</html>",
+			position = 21,
+			section = generalSection
+	)
+	default ActivityFlash activityWarningFlash()
+	{
+		return ActivityFlash.FLASH_UNTIL_CANCELLED;
 	}
 
 	@ConfigItem(
