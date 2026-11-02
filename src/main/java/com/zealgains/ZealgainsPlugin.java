@@ -24,7 +24,7 @@ import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.CommandExecuted;
-import net.runelite.api.events.FriendsChatChanged;
+import net.runelite.api.events.FriendsChatSync;
 import net.runelite.api.events.FriendsChatMemberJoined;
 import net.runelite.api.events.FriendsChatMemberLeft;
 import net.runelite.api.events.GameStateChanged;
@@ -35,6 +35,10 @@ import net.runelite.api.widgets.Widget;
 import net.runelite.client.Notifier;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.config.FlashNotification;
+import net.runelite.client.config.Notification;
+import net.runelite.client.config.NotificationSound;
+import net.runelite.client.config.RequestFocusType;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
@@ -176,6 +180,11 @@ public class ZealgainsPlugin extends Plugin
 	private long lastBroadcastReset = 0;
 	// Tracks the local player's Soul Wars team; resets to 0 on any exit (idle-kick, normal end, lobby)
 	private static final int VARBIT_SOUL_WARS_TEAM = 3815;
+	// Activity bar: 0 (idle-kicked) to 800 (full). Same varbit/scale the Soul Wars Plugin Hub plugin uses.
+	private static final int VARBIT_SOUL_WARS_ACTIVITY = 9794;
+	private static final int ACTIVITY_MAX = 800;
+	// True once the Activity Warning has fired; re-arms when the bar climbs back above the threshold
+	private boolean activityWarned = false;
 
 	// Matches the leading call-shaped prefix of a token — used to walk the leading run of tokens
 	// in a message rather than searching for calls anywhere in the sentence (see onChatMessage).
@@ -394,9 +403,9 @@ public class ZealgainsPlugin extends Plugin
 	// --- FC EVENT LISTENERS ---
 
 	@Subscribe
-	public void onFriendsChatChanged(FriendsChatChanged event)
+	public void onFriendsChatSync(FriendsChatSync event)
 	{
-		// Recompute when joining or leaving an FC entirely
+		// Recompute on a full FC sync: joining, re-syncing, or leaving (isSync() == false)
 		cachedMajorityWorld = getMajorityWorld(client.getFriendsChatManager());
 	}
 
@@ -538,6 +547,11 @@ public class ZealgainsPlugin extends Plugin
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged event)
 	{
+		if (event.getVarbitId() == VARBIT_SOUL_WARS_ACTIVITY)
+		{
+			checkActivityWarning(event.getValue());
+			return;
+		}
 		if (event.getVarbitId() != VARBIT_SOUL_WARS_TEAM) return;
 		switch (event.getValue())
 		{
@@ -971,6 +985,10 @@ public class ZealgainsPlugin extends Plugin
 					"  Respawn timers: Blue " + (blueAvatarDeathMillis < 0 ? "alive" : (nowMs - blueAvatarDeathMillis) / 1000 + "s since death")
 							+ ", Red " + (redAvatarDeathMillis < 0 ? "alive" : (nowMs - redAvatarDeathMillis) / 1000 + "s since death")
 							+ ", shown=" + getVisibleRespawnSeconds(), null);
+			int activity = client.getVarbitValue(VARBIT_SOUL_WARS_ACTIVITY);
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"  Activity: " + activity + "/" + ACTIVITY_MAX + " (" + (activity * 100 / ACTIVITY_MAX) + "%)"
+							+ ", warned=" + activityWarned, null);
 
 			Widget redKillsW  = client.getWidget(375, 12);
 			Widget blueKillsW = client.getWidget(375, 11);
@@ -1192,6 +1210,7 @@ public class ZealgainsPlugin extends Plugin
 		trackedObelisk = null; obeliskWarnActive = false;
 		lastGameRedScore = 0; lastGameBlueScore = 0; lastKnownGameSeconds = -1;
 		prevTimeAlertSeconds = -1;
+		activityWarned = false;
 		lobbyPlayerCount = 0; lobbyCountSet = false; prevLobbyTimerSeconds = -1;
 
 		if (panel != null)
@@ -1276,6 +1295,46 @@ public class ZealgainsPlugin extends Plugin
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
 					"<col=" + colorToHex(config.timeAlertColor()) + ">Zealgains: Timer alert — " + timeStr + " left</col>", null);
 			notifier.notify(config.timeAlertNotification(), "Soul Wars timer: " + timeStr + " left");
+		}
+	}
+
+	// Fires the Activity Warning once each time the activity bar drops to/below the configured percent.
+	// Only while on a team (varbit 3815), and never at 0 — the bar can reset to 0 as the game ends,
+	// and at 0 you have already been kicked.
+	private void checkActivityWarning(int activity)
+	{
+		int threshold = config.activityWarningThreshold();
+		if (!config.activityWarning() || activity * 100 > threshold * ACTIVITY_MAX)
+		{
+			activityWarned = false;
+			return;
+		}
+		if (activityWarned || activity <= 0 || client.getVarbitValue(VARBIT_SOUL_WARS_TEAM) == 0) return;
+		activityWarned = true;
+
+		int percent = activity * 100 / ACTIVITY_MAX;
+		client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+				"<col=" + colorToHex(config.activityWarningColor()) + ">Zealgains: Activity at " + percent + "% — do something before you are kicked!</col>", null);
+		notifier.notify(config.activityWarningNotification(), "Soul Wars activity at " + percent + "%");
+
+		// Flash-only notification: RuneLite skips notifications entirely while the client is focused
+		// unless sendWhenFocused is set, and override=true stops the global notification settings
+		// (tray popup, sound, focus) from being applied on top. Sent after the notification above
+		// so this flash wins if the user's own notification also flashes.
+		FlashNotification flash = config.activityWarningFlash().flash;
+		if (flash != FlashNotification.DISABLED)
+		{
+			notifier.notify(Notification.ON
+					.withOverride(true)
+					.withInitialized(true)
+					.withTray(false)
+					.withRequestFocus(RequestFocusType.OFF)
+					.withSound(NotificationSound.OFF)
+					.withGameMessage(false)
+					.withSendWhenFocused(true)
+					.withFlash(flash)
+					.withFlashColor(config.activityWarningFlashColor()),
+					"Soul Wars activity at " + percent + "%");
 		}
 	}
 
